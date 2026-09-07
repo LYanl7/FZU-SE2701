@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f7f6f2" />
+    <meta name="description" content="由 FLUX Realism LoRA 驱动的对话式图像生成器" />
+    <title>Lumen — 写实图像生成</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" id="sidebar">
+        <div class="brand-row">
+          <a class="brand" href="#" aria-label="Lumen 首页">
+            <span class="brand-mark" aria-hidden="true">
+              <svg viewBox="0 0 28 28"><path d="M14 2.5c1.8 5.8 5.7 9.7 11.5 11.5-5.8 1.8-9.7 5.7-11.5 11.5C12.2 19.7 8.3 15.8 2.5 14 8.3 12.2 12.2 8.3 14 2.5Z" fill="currentColor"/></svg>
+            </span>
+            <span>LUMEN</span>
+          </a>
+          <button class="icon-button mobile-only" id="closeSidebar" aria-label="关闭侧栏">
+            <svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg>
+          </button>
+        </div>
+
+        <button class="new-chat" id="newChat">
+          <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+          <span>新建创作</span>
+          <kbd>⌘ K</kbd>
+        </button>
+
+        <nav class="history-nav" aria-label="创作历史">
+          <p class="nav-label">最近创作</p>
+          <div id="historyList" class="history-list"></div>
+        </nav>
+
+        <div class="sidebar-footer">
+          <div class="model-pill">
+            <span class="status-dot"></span>
+            <div>
+              <strong>Realism LoRA</strong>
+              <small>FLUX.1-dev · fal</small>
+            </div>
+          </div>
+          <a class="model-link" href="https://huggingface.co/XLabs-AI/flux-RealismLora" target="_blank" rel="noreferrer">
+            查看模型
+            <svg viewBox="0 0 24 24"><path d="M7 17 17 7M8 7h9v9"/></svg>
+          </a>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <button class="icon-button menu-button" id="openSidebar" aria-label="打开侧栏">
+            <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+          </button>
+          <button class="model-selector" id="settingsToggle" aria-expanded="false">
+            <span>Realism LoRA</span>
+            <svg viewBox="0 0 24 24"><path d="m8 10 4 4 4-4"/></svg>
+          </button>
+          <div class="top-actions">
+            <button class="icon-button" id="themeToggle" aria-label="切换主题">
+              <svg class="sun-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.66 6.34l1.41-1.41"/></svg>
+              <svg class="moon-icon" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z"/></svg>
+            </button>
+            <button class="avatar" aria-label="账户">L</button>
+          </div>
+        </header>
+
+        <section class="settings-panel" id="settingsPanel" aria-hidden="true">
+          <div class="settings-inner">
+            <div class="setting-title">
+              <span>生成设置</span>
+              <small>调整画面比例与模型参数</small>
+            </div>
+            <label class="setting-field">
+              <span>画面比例</span>
+              <select id="aspectRatio">
+                <option value="1024x1024">1:1 正方形</option>
+                <option value="1152x896">4:3 横向</option>
+                <option value="896x1152">3:4 纵向</option>
+                <option value="1344x768">16:9 横向</option>
+                <option value="768x1344">9:16 纵向</option>
+              </select>
+            </label>
+            <label class="setting-field">
+              <span>推理步数 <output id="stepsValue">28</output></span>
+              <input id="steps" type="range" min="10" max="50" value="28" />
+            </label>
+            <label class="setting-field">
+              <span>引导强度 <output id="guidanceValue">3.5</output></span>
+              <input id="guidance" type="range" min="1" max="12" value="3.5" step="0.5" />
+            </label>
+            <label class="setting-field negative-field">
+              <span>反向提示词</span>
+              <input id="negativePrompt" type="text" placeholder="模糊、畸形、低质量…" />
+            </label>
+            <label class="setting-field seed-field">
+              <span>随机种子</span>
+              <input id="seed" type="number" placeholder="随机" min="0" max="2147483647" />
+            </label>
+          </div>
+        </section>
+
+        <div class="conversation" id="conversation">
+          <section class="welcome" id="welcome">
+            <div class="hero-orbit" aria-hidden="true">
+              <span class="orbit orbit-one"></span>
+              <span class="orbit orbit-two"></span>
+              <div class="hero-mark">
+                <svg viewBox="0 0 44 44"><path d="M22 3.5C24.9 12.9 31.1 19.1 40.5 22 31.1 24.9 24.9 31.1 22 40.5 19.1 31.1 12.9 24.9 3.5 22 12.9 19.1 19.1 12.9 22 3.5Z" fill="currentColor"/></svg>
+              </div>
+            </div>
+            <p class="eyebrow">FLUX REALISM STUDIO</p>
+            <h1>把想象，变成<span>真实光影。</span></h1>
+            <p class="intro">描述你脑海中的画面。Lumen 会用写实 LoRA 将语言转化为细腻、自然的图像。</p>
+            <div class="suggestion-grid">
+              <button class="suggestion" data-prompt="电影感街头摄影，雨后的东京小巷，霓虹灯倒映在湿润路面上，一位穿米色风衣的年轻女子回头看向镜头，35mm 胶片质感，自然肤色，浅景深">
+                <span class="suggestion-icon amber"><svg viewBox="0 0 24 24"><path d="M4 16l4.6-5.5 3.2 3.6 2.6-2.7L20 17H4Z"/><circle cx="16.5" cy="7.5" r="2"/></svg></span>
+                <span><strong>电影感街拍</strong><small>雨夜东京，胶片质感与自然光影</small></span>
+                <svg class="arrow" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>
+              </button>
+              <button class="suggestion" data-prompt="一间坐落在挪威峡湾边的现代木屋，巨大的落地窗透出温暖灯光，冬日清晨，远山覆雪，建筑摄影，超写实，宁静氛围">
+                <span class="suggestion-icon blue"><svg viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5M5 10v10h14V10M9 20v-6h6v6"/></svg></span>
+                <span><strong>空间与建筑</strong><small>峡湾木屋，冬日清晨与静谧氛围</small></span>
+                <svg class="arrow" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>
+              </button>
+              <button class="suggestion" data-prompt="高端护肤品广告，一只磨砂玻璃精华瓶立在浅灰色岩石上，周围有细小水珠和绿色蕨叶，柔和晨光，干净背景，商业产品摄影，极致细节">
+                <span class="suggestion-icon green"><svg viewBox="0 0 24 24"><path d="M9 3h6v4H9zM7 7h10l1 14H6L7 7Z"/></svg></span>
+                <span><strong>商业产品照</strong><small>高级质感，柔光与极致细节</small></span>
+                <svg class="arrow" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>
+              </button>
+              <button class="suggestion" data-prompt="一位八十岁的中国茶农坐在老木门前，脸上布满岁月纹理，午后侧光，眼神温和，纪实人像摄影，85mm 镜头，真实皮肤质感，高动态范围">
+                <span class="suggestion-icon rose"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg></span>
+                <span><strong>真实人物肖像</strong><small>纪实视角，细腻情绪与皮肤质感</small></span>
+                <svg class="arrow" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>
+              </button>
+            </div>
+          </section>
+
+          <div class="messages" id="messages" aria-live="polite"></div>
+        </div>
+
+        <footer class="composer-wrap">
+          <form class="composer" id="promptForm">
+            <textarea id="promptInput" rows="1" maxlength="2000" placeholder="描述你想创造的画面…" aria-label="图像提示词"></textarea>
+            <div class="composer-bottom">
+              <div class="composer-tools">
+                <button class="tool-button" type="button" id="randomPrompt" title="灵感提示">
+                  <svg viewBox="0 0 24 24"><path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>
+                  <span>灵感</span>
+                </button>
+                <span class="divider"></span>
+                <button class="ratio-button" type="button" id="ratioShortcut">1:1</button>
+              </div>
+              <button class="send-button" type="submit" id="sendButton" aria-label="生成图像">
+                <svg viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></svg>
+              </button>
+            </div>
+          </form>
+          <p class="disclaimer">图像由 AI 生成，可能存在不准确之处 · 仅限非商业用途</p>
+        </footer>
+      </main>
+    </div>
+    <div class="sidebar-scrim" id="sidebarScrim"></div>
+    <div class="toast" id="toast" role="status"></div>
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
