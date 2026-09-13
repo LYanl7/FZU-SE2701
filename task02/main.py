@@ -1,4 +1,4 @@
-"""Application entry point."""
+"""Application entry point for the Pygame game."""
 
 import sys
 from pathlib import Path
