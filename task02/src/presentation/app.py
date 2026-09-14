@@ -10,6 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from importlib import import_module
 from math import pi, sin
+import os
+from pathlib import Path
 from typing import Any
 
 
@@ -504,9 +506,34 @@ class GameApp:
 
     def _font(self, size: int) -> Any:
         if size not in self._fonts:
-            self._fonts[size] = self._pygame.font.SysFont(
-                "microsoftyahei,simhei,arial", size
-            )
+            font = None
+            windows_dir = os.environ.get("WINDIR") or os.environ.get("windir")
+            if windows_dir:
+                font_dir = Path(windows_dir) / "Fonts"
+                font_candidates = (
+                    font_dir / "msyh.ttc",
+                    font_dir / "msyhbd.ttc",
+                    font_dir / "simhei.ttf",
+                    font_dir / "simsun.ttc",
+                    font_dir / "arial.ttf",
+                )
+            else:
+                font_candidates = ()
+
+            for font_path in font_candidates:
+                if not font_path.is_file():
+                    continue
+                try:
+                    font = self._pygame.font.Font(str(font_path), size)
+                    break
+                except (OSError, RuntimeError, TypeError):
+                    # A font file may exist but still be unsupported by the
+                    # installed SDL_ttf/Pygame combination. Try the next one.
+                    continue
+
+            if font is None:
+                font = self._pygame.font.Font(None, size)
+            self._fonts[size] = font
         return self._fonts[size]
 
     def _text(
