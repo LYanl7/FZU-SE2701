@@ -1,9 +1,10 @@
 """Pygame-independent game rules and level controller.
 
-The current model only defines an Arrow anchor (row, column, direction).  For
-long or segmented arrows, an Arrow-like object may additionally expose
-``occupied_cells``, ``cells``, ``path`` or ``segments``.  Coordinates are
-(row, column); segments are expanded inclusively.
+Point-native arrows are ordered polylines: adjacent ``Arrow.points`` form
+line segments and the last point is the tip.  Arrow-like objects may expose
+``line_segments`` instead; occupied cells/path values remain supported by the
+legacy row/column API.  Point-native callers use ``handle_point(x, y)`` and
+are never quantized to a grid.
 
 Direction convention: 0=up, 1=right, 2=down, 3=left.  The strings
 ``up/right/down/left`` and direction vectors are accepted too.
@@ -17,7 +18,7 @@ import itertools
 import math
 from typing import Any
 
-from model.arrow import Arrow, ArrowSegment
+from model.arrow import Arrow, Point
 from model.game_state import GameState
 from model.grid import Grid
 
@@ -56,7 +57,7 @@ class GameController:
         *,
         max_mistakes: int = 3,
         levels: Sequence[Any] | None = None,
-        animation_duration: float = 0.35,
+        animation_duration: float = 0.7,
     ) -> None:
         if not isinstance(max_mistakes, int) or isinstance(max_mistakes, bool):
             raise TypeError("max_mistakes must be an integer")
@@ -79,6 +80,7 @@ class GameController:
         self._level_index = 0
         self.current_level = 1
         self.phase = self.PHASE_PLAYING
+        self._elapsed_seconds = 0.0
         self._mistakes_remaining = max_mistakes
         self._animations: dict[str, float] = {}
         self._animation_arrows: dict[str, Any] = {}
@@ -86,6 +88,7 @@ class GameController:
         self._events: list[Event] = []
         self._initial_arrows = copy.deepcopy(list(self.state.arrows))
         self._initial_grid = copy.deepcopy(self.state.grid)
+        self._set_elapsed(0.0)
         self._set_mistakes(max_mistakes)
         self._sync_grid()
 
@@ -96,8 +99,8 @@ class GameController:
     def _default_levels() -> list[GameState]:
         """Return fresh, small levels used by the no-argument controller.
 
-        The first level demonstrates straight arrows.  The second combines a
-        segmented arrow with straight arrows.  Each level is solvable by
+        The first level demonstrates straight arrows.  The second combines
+        point-native arrows with different directions.  Each level is solvable by
         removing the independently exposed arrows before the arrows behind
         them.
         """
@@ -105,37 +108,44 @@ class GameController:
             grid=Grid(rows=6, columns=6),
             arrows=[
                 # Exposed arrow: remove this before the horizontal arrow.
-                Arrow(row=2, column=4, direction=0),
-                Arrow(row=2, column=0, direction=1),
-                Arrow(row=5, column=2, direction=0),
+                Arrow(
+                    points=(Point(4, 3), Point(4, 2), Point(4, 1)),
+                    direction=0,
+                ),
+                Arrow(
+                    points=(Point(1, 3), Point(2, 3), Point(3, 3)),
+                    direction=1,
+                ),
+                Arrow(
+                    points=(Point(5, 5), Point(4, 5), Point(3, 5)),
+                    direction="left",
+                ),
             ],
         )
-        if ArrowSegment is not None:
-            segmented = Arrow(
-                row=4,
-                column=1,
-                direction="right",
-                arrow_type="segmented",
-                segments=(
-                    ArrowSegment(((4, 1), (4, 2))),
-                    ArrowSegment(((4, 2), (3, 2))),
-                ),
-            )
-        else:
-            segmented = Arrow(row=4, column=1, direction="right")
-            segmented.segments = [
-                ((4, 1), (4, 2)),
-                ((4, 2), (3, 2)),
-            ]
+        # Canonical point paths are ordered from tail to tip.  The right-facing
+        # three-segment arrow at y=4 is blocked by the up-facing arrow at x=5,
+        # while the other arrows are initially exposed.
         level_two = GameState(
             grid=Grid(rows=7, columns=7),
             arrows=[
-                # This exposed arrow blocks the segmented arrow's rightward
-                # path until it has been removed first.
-                Arrow(row=4, column=5, direction="up"),
-                segmented,
-                Arrow(row=6, column=6, direction="left"),
+                # This exposed arrow blocks the right-facing arrow's path
+                # until it has been removed first.
+                Arrow(
+                    points=(Point(5, 4), Point(5, 3), Point(5, 2)),
+                    direction="up",
+                ),
+                Arrow(
+                    points=(
+                        Point(1, 2), Point(2, 2), Point(2, 4), Point(4, 4),
+                    ),
+                    direction="right",
+                ),
+                Arrow(
+                    points=(Point(6, 6), Point(5, 6), Point(4, 6)),
+                    direction="left",
+                ),
             ],
+            level=2,
         )
         return [level_one, level_two]
 
@@ -148,6 +158,15 @@ class GameController:
     def remaining_arrows(self) -> int:
         """Number of active arrows on the board."""
         return sum(1 for arrow in self.state.arrows if self._active(arrow))
+
+    @property
+    def elapsed_seconds(self) -> float:
+        """Elapsed play time for the current level in seconds.
+
+        The value advances only while the controller is in ``PHASE_PLAYING``;
+        terminal-state updates are intentionally no-ops for this clock.
+        """
+        return self._elapsed_seconds
 
     @property
     def animations(self) -> tuple[dict[str, Any], ...]:
@@ -163,6 +182,14 @@ class GameController:
         Invalid, repeated, and post-result clicks never consume a mistake.
         Exactly one mistake is consumed when an active arrow is blocked.
         """
+        # Point-native clients should use handle_point; accepting numeric
+        # coordinates here as well keeps the controller convenient for simple
+        # adapters while preserving the legacy integer API.
+        if not (
+            isinstance(row, int) and not isinstance(row, bool)
+            and isinstance(column, int) and not isinstance(column, bool)
+        ):
+            return self.handle_point(float(column), float(row))
         cell = self._normalise_cell((row, column))
         if cell is None or not self._in_bounds(cell):
             return self._publish(self._event(self.EVENT_INVALID_CLICK, row=row, column=column))
@@ -171,6 +198,13 @@ class GameController:
 
         arrow = self._arrow_at(cell)
         if arrow is None:
+            # Point-native default levels use half-unit board coordinates.  A
+            # legacy row/column caller can still target the corresponding
+            # point at the center of that old cell without quantizing the
+            # point-based geometry itself.
+            center = Point(float(column) + 0.5, float(row) + 0.5)
+            if self._in_point_bounds(center) and self._arrow_at_point(center) is not None:
+                return self.handle_point(center.x, center.y)
             return self._publish(self._event(self.EVENT_INVALID_CLICK, row=row, column=column))
 
         cells = self._arrow_cells(arrow)
@@ -180,7 +214,17 @@ class GameController:
                 self.EVENT_INVALID_ARROW, row=row, column=column, arrow=arrow, cells=cells,
             ))
 
-        blockers = self._blockers(arrow, cells, direction)
+        blockers, collision_point, collision_arrow = self._point_blocker_details(
+            arrow, direction
+        )
+        if not blockers:
+            # Keep the original occupancy-ray implementation as a fallback
+            # for Arrow-like legacy objects that expose cells but no points.
+            blockers = self._blockers(arrow, cells, direction)
+            if blockers and collision_point is None:
+                collision_point, collision_arrow = self._legacy_collision_details(
+                    arrow, direction, blockers
+                )
         if blockers:
             self._set_mistakes(self.mistakes_remaining - 1)
             events = [self._event(
@@ -190,6 +234,11 @@ class GameController:
                 blocked_by=blockers,
                 direction=direction,
                 mistakes_remaining=self.mistakes_remaining,
+                collision_arrow=collision_arrow,
+                collision_point=collision_point,
+                blocked_destination=self._blocked_destination(
+                    self._arrow_tip(arrow), collision_point, direction
+                ),
                 feedback={
                     "kind": "collision",
                     "effects": ("shake", "flash", "text"),
@@ -207,6 +256,12 @@ class GameController:
 
         animation_id = f"fly-out-{next(self._animation_ids)}"
         self._animations[animation_id] = self.animation_duration
+        # Keep the arrow associated with its timer so the logical lifecycle
+        # can be completed when the presentation finishes the flight.  The
+        # board cells are cleared immediately in ``_deactivate`` (the arrow
+        # must not remain rendered at its origin while it is flying), while
+        # the model is marked REMOVED only after the animation duration.
+        self._animation_arrows[animation_id] = arrow
         self._deactivate(arrow)
         events = [self._event(
             self.EVENT_ARROW_FLY_OUT,
@@ -219,13 +274,77 @@ class GameController:
             },
             remaining_arrows=self.remaining_arrows,
         )]
-        if self.remaining_arrows == 0:
-            self.phase = self.PHASE_LEVEL_COMPLETE
-            self._set_result("won")
-            events.append(self._event(
-                self.EVENT_LEVEL_COMPLETE,
-                final=self._is_final_level(), remaining_arrows=0,
+        return self._publish(events)
+
+    def handle_point(self, x: float, y: float) -> list[Event]:
+        """Process a click in the point-coordinate board space.
+
+        Unlike ``handle_action(row, column)``, this method does not quantize
+        the click or the arrows to cells.  It is the preferred entry point for
+        a point-based renderer.
+        """
+        point = self._normalise_point((x, y))
+        if point is None or not self._in_point_bounds(point):
+            return self._publish(self._event(self.EVENT_INVALID_CLICK, x=x, y=y))
+        if self.phase != self.PHASE_PLAYING:
+            return self._publish(self._event(self.EVENT_ACTION_IGNORED, x=x, y=y))
+
+        arrow = self._arrow_at_point(point)
+        if arrow is None:
+            return self._publish(self._event(self.EVENT_INVALID_CLICK, x=x, y=y))
+        points = self._arrow_polyline(arrow)
+        direction = self._direction(arrow)
+        if direction is None:
+            return self._publish(self._event(
+                self.EVENT_INVALID_ARROW, x=x, y=y, arrow=arrow, points=points,
             ))
+        blockers, collision_point, collision_arrow = self._point_blocker_details(
+            arrow, direction
+        )
+        if blockers:
+            self._set_mistakes(self.mistakes_remaining - 1)
+            events = [self._event(
+                self.EVENT_ARROW_BLOCKED,
+                arrow=arrow,
+                points=points,
+                blocked_by=blockers,
+                direction=direction,
+                mistakes_remaining=self.mistakes_remaining,
+                collision_arrow=collision_arrow,
+                collision_point=collision_point,
+                blocked_destination=self._blocked_destination(
+                    self._arrow_tip(arrow), collision_point, direction
+                ),
+                feedback={
+                    "kind": "collision",
+                    "effects": ("shake", "flash", "text"),
+                    "duration": 0.28,
+                },
+            )]
+            if self.mistakes_remaining == 0:
+                self.phase = self.PHASE_FAILED
+                self._set_result("lost")
+                events.append(self._event(
+                    self.EVENT_LEVEL_FAILED,
+                    reason="mistakes_exhausted", mistakes_remaining=0,
+                ))
+            return self._publish(events)
+
+        animation_id = f"fly-out-{next(self._animation_ids)}"
+        self._animations[animation_id] = self.animation_duration
+        self._animation_arrows[animation_id] = arrow
+        self._deactivate(arrow)
+        events = [self._event(
+            self.EVENT_ARROW_FLY_OUT,
+            arrow=arrow,
+            points=points,
+            direction=direction,
+            destination=self._edge_destination_point(points, direction),
+            animation={
+                "id": animation_id, "kind": "fly_out", "duration": self.animation_duration,
+            },
+            remaining_arrows=self.remaining_arrows,
+        )]
         return self._publish(events)
 
     def update(self, delta_seconds: float) -> list[Event]:
@@ -234,6 +353,9 @@ class GameController:
             raise TypeError("delta_seconds must be numeric")
         if delta_seconds < 0 or not math.isfinite(delta_seconds):
             raise ValueError("delta_seconds must be finite and non-negative")
+
+        if self.phase == self.PHASE_PLAYING:
+            self._set_elapsed(self._elapsed_seconds + float(delta_seconds))
 
         events: list[Event] = []
         finished: list[str] = []
@@ -245,14 +367,39 @@ class GameController:
                 self._animations[animation_id] = remaining
         for animation_id in finished:
             del self._animations[animation_id]
+            arrow = self._animation_arrows.pop(animation_id, None)
+            if arrow is not None:
+                # Only the final pending animation may invoke
+                # ``GameState.complete_arrow_exit``.  The model treats a
+                # FLYING_OUT arrow as no longer remaining, so calling that
+                # method while another animation is still running would mark
+                # the whole state WON and stop the presentation ticking.
+                self._finish_animation(arrow, finalize_state=not self._animations)
             events.append(self._event(
-                self.EVENT_ANIMATION_FINISHED, animation_id=animation_id,
+                self.EVENT_ANIMATION_FINISHED,
+                animation_id=animation_id,
+            ))
+        # Do not finish a level when its last arrow merely starts flying.  The
+        # presentation stops ticking once the state is WON, so this transition
+        # must happen only after every pending exit animation has completed.
+        if (
+            self.phase == self.PHASE_PLAYING
+            and not self._animations
+            and self.remaining_arrows == 0
+        ):
+            self.phase = self.PHASE_LEVEL_COMPLETE
+            self._set_result("won")
+            events.append(self._event(
+                self.EVENT_LEVEL_COMPLETE,
+                final=self._is_final_level(), remaining_arrows=0,
             ))
         return self._publish(events)
 
     def restart(self) -> list[Event]:
         """Restore the current level, including arrows and mistakes."""
         self._animations.clear()
+        self._animation_arrows.clear()
+        self._set_elapsed(0.0)
         self.state.arrows = copy.deepcopy(self._initial_arrows)
         self._restore_grid()
         self._set_mistakes(self.max_mistakes)
@@ -298,6 +445,8 @@ class GameController:
         self._initial_arrows = copy.deepcopy(list(self.state.arrows))
         self._initial_grid = copy.deepcopy(self.state.grid)
         self._animations.clear()
+        self._animation_arrows.clear()
+        self._set_elapsed(0.0)
         self._restore_grid()
         self._set_mistakes(self.max_mistakes)
         self.phase = self.PHASE_PLAYING
@@ -345,6 +494,16 @@ class GameController:
         # convenience field attached to its normal, non-slotted dataclass.
         self.state.mistakes_remaining = self._mistakes_remaining
 
+    def _set_elapsed(self, value: float) -> None:
+        """Update the controller clock and expose it through the state too."""
+        self._elapsed_seconds = max(0.0, float(value))
+        # GameState is intentionally kept backwards-compatible; attaching the
+        # mirror field lets HUD adapters read either the controller or state.
+        try:
+            self.state.elapsed_seconds = self._elapsed_seconds
+        except (AttributeError, TypeError):
+            pass
+
     def _is_final_level(self) -> bool:
         return not self._levels or self._level_index + 1 >= len(self._levels)
 
@@ -353,6 +512,17 @@ class GameController:
             if self._active(arrow) and cell in self._arrow_cells(arrow):
                 return arrow
         return None
+
+    def _arrow_at_point(self, point: Point, tolerance: float = 0.45) -> Any | None:
+        """Find the nearest active arrow line within a board-unit radius."""
+        candidates: list[tuple[float, Any]] = []
+        for arrow in reversed(self.state.arrows):
+            if not self._active(arrow):
+                continue
+            distance = self._point_to_arrow_distance(point, arrow)
+            if distance <= tolerance:
+                candidates.append((distance, arrow))
+        return min(candidates, key=lambda item: item[0])[1] if candidates else None
 
     @staticmethod
     def _active(arrow: Any) -> bool:
@@ -383,6 +553,159 @@ class GameController:
                 probe = (probe[0] + direction[0], probe[1] + direction[1])
         return blockers
 
+    def _point_blockers(self, target: Any, direction: Cell) -> list[Any]:
+        """Find active arrows intersecting the target's continuous exit ray."""
+        blockers, _, _ = self._point_blocker_details(target, direction)
+        return blockers
+
+    def _point_blocker_details(
+        self, target: Any, direction: Cell,
+    ) -> tuple[list[Any], Point | None, Any | None]:
+        """Return blockers ordered by nearest intersection with the exit ray.
+
+        The returned point is the first collision point along the ray and the
+        returned arrow is the corresponding nearest blocker.  All blockers
+        remain in the first tuple item for compatibility with the existing
+        ``blocked_by`` event field.
+        """
+        tip = self._arrow_tip(target)
+        if tip is None:
+            return [], None, None
+        ray = self._ray_to_boundary(tip, direction)
+        if ray is None:
+            return [], None, None
+
+        nearest_by_arrow: list[tuple[float, int, Any]] = []
+        for arrow in self.state.arrows:
+            if not self._active(arrow) or arrow is target:
+                continue
+            hit_parameters = [
+                parameter
+                for segment in self._arrow_segments(arrow)
+                if (parameter := self._ray_segment_parameter(ray, segment)) is not None
+            ]
+            if hit_parameters:
+                nearest_by_arrow.append((min(hit_parameters), len(nearest_by_arrow), arrow))
+
+        nearest_by_arrow.sort(key=lambda item: (item[0], item[1]))
+        if not nearest_by_arrow:
+            return [], None, None
+        nearest_parameter, _, nearest_arrow = nearest_by_arrow[0]
+        collision_point = self._point_on_segment(ray, nearest_parameter)
+        return [item[2] for item in nearest_by_arrow], collision_point, nearest_arrow
+
+    @staticmethod
+    def _cross(first: Point, second: Point, third: Point) -> float:
+        """Cross product of (second-first) and (third-first)."""
+        return (second.x - first.x) * (third.y - first.y) - (
+            second.y - first.y
+        ) * (third.x - first.x)
+
+    @staticmethod
+    def _point_on_segment(
+        segment: tuple[Point, Point], parameter: float,
+    ) -> Point:
+        start, end = segment
+        return Point(
+            start.x + (end.x - start.x) * parameter,
+            start.y + (end.y - start.y) * parameter,
+        )
+
+    @staticmethod
+    def _ray_segment_parameter(
+        ray: tuple[Point, Point], segment: tuple[Point, Point],
+        epsilon: float = 1e-9,
+    ) -> float | None:
+        """Return the first normalized ray parameter at a segment hit."""
+        ray_start, ray_end = ray
+        segment_start, segment_end = segment
+        ray_dx = ray_end.x - ray_start.x
+        ray_dy = ray_end.y - ray_start.y
+        segment_dx = segment_end.x - segment_start.x
+        segment_dy = segment_end.y - segment_start.y
+        ray_length_squared = ray_dx * ray_dx + ray_dy * ray_dy
+        if ray_length_squared <= epsilon:
+            return None
+
+        denominator = ray_dx * segment_dy - ray_dy * segment_dx
+        offset_x = segment_start.x - ray_start.x
+        offset_y = segment_start.y - ray_start.y
+        if abs(denominator) > epsilon:
+            ray_parameter = (offset_x * segment_dy - offset_y * segment_dx) / denominator
+            segment_parameter = (offset_x * ray_dy - offset_y * ray_dx) / denominator
+            if -epsilon <= ray_parameter <= 1 + epsilon and -epsilon <= segment_parameter <= 1 + epsilon:
+                return max(0.0, min(1.0, ray_parameter))
+            return None
+
+        # Parallel segments only collide when they are collinear.  Project
+        # both endpoints onto the ray and take the first overlapping point.
+        if abs(offset_x * ray_dy - offset_y * ray_dx) > epsilon:
+            return None
+        projected = [
+            ((point.x - ray_start.x) * ray_dx + (point.y - ray_start.y) * ray_dy)
+            / ray_length_squared
+            for point in (segment_start, segment_end)
+        ]
+        first = max(0.0, min(projected))
+        last = min(1.0, max(projected))
+        return first if first <= last + epsilon else None
+
+    def _blocked_destination(
+        self, tip: Point | None, collision_point: Point | None, direction: Cell,
+        gap: float = 0.12,
+    ) -> Point | None:
+        """Return the safe destination for the arrow tip before a blocker.
+
+        ``blocked_destination`` is deliberately defined as a tip position,
+        not an anchor position.  Translating the whole polyline by the
+        resulting tip delta preserves the arrow's own length and keeps a
+        small visual gap before the collision line.
+        """
+        if tip is None:
+            return None
+        if collision_point is None:
+            return tip
+        dx, dy = direction[1], direction[0]
+        distance = (
+            (collision_point.x - tip.x) * dx
+            + (collision_point.y - tip.y) * dy
+        )
+        travel = max(0.0, distance - max(0.0, gap))
+        return Point(tip.x + dx * travel, tip.y + dy * travel)
+
+    def _legacy_collision_details(
+        self, target: Any, direction: Cell, blockers: Sequence[Any],
+    ) -> tuple[Point | None, Any | None]:
+        """Approximate collision details for cell-only Arrow-like objects."""
+        tip = self._arrow_tip(target)
+        if tip is None:
+            cells = self._arrow_cells(target)
+            if not cells:
+                return None, None
+            if direction == (-1, 0):
+                cell = min(cells, key=lambda value: value[0])
+            elif direction == (1, 0):
+                cell = max(cells, key=lambda value: value[0])
+            elif direction == (0, -1):
+                cell = min(cells, key=lambda value: value[1])
+            else:
+                cell = max(cells, key=lambda value: value[1])
+            tip = Point(float(cell[1]), float(cell[0]))
+        ray = self._ray_to_boundary(tip, direction)
+        if ray is None:
+            return None, None
+        nearest: tuple[float, Any] | None = None
+        for blocker in blockers:
+            for row, column in self._arrow_cells(blocker):
+                parameter = self._ray_segment_parameter(
+                    ray, (Point(float(column), float(row)), Point(float(column), float(row)))
+                )
+                if parameter is not None and (nearest is None or parameter < nearest[0]):
+                    nearest = parameter, blocker
+        if nearest is None:
+            return None, blockers[0] if blockers else None
+        return self._point_on_segment(ray, nearest[0]), nearest[1]
+
     def _deactivate(self, arrow: Any) -> None:
         if hasattr(arrow, "mark_flying_out"):
             arrow.mark_flying_out()
@@ -391,6 +714,31 @@ class GameController:
                 arrow.active = False
             except (AttributeError, TypeError):
                 self.state.arrows = [candidate for candidate in self.state.arrows if candidate is not arrow]
+        self._clear_grid_cells(arrow)
+
+    def _finish_animation(self, arrow: Any, *, finalize_state: bool = True) -> None:
+        """Finalize an arrow after its fly-out animation has elapsed.
+
+        ``GameState`` owns the modern Arrow lifecycle and removes the arrow
+        from the occupancy index.  The fallback branches preserve support for
+        the lightweight Arrow-like objects accepted by this controller.
+        """
+        complete_exit = getattr(self.state, "complete_arrow_exit", None)
+        if finalize_state and callable(complete_exit):
+            complete_exit(arrow)
+            return
+
+        mark_removed = getattr(arrow, "mark_removed", None)
+        if callable(mark_removed):
+            mark_removed()
+            return
+
+        try:
+            arrow.active = False
+        except (AttributeError, TypeError):
+            self.state.arrows = [
+                candidate for candidate in self.state.arrows if candidate is not arrow
+            ]
         self._clear_grid_cells(arrow)
 
     def _clear_grid_cells(self, arrow: Any) -> None:
@@ -442,6 +790,11 @@ class GameController:
         columns = int(getattr(self.state.grid, "columns", 0))
         return 0 <= cell[0] < rows and 0 <= cell[1] < columns
 
+    def _in_point_bounds(self, point: Point) -> bool:
+        rows = float(getattr(self.state.grid, "rows", 0))
+        columns = float(getattr(self.state.grid, "columns", 0))
+        return 0 <= point.x < columns and 0 <= point.y < rows
+
     def _direction(self, arrow: Any) -> Cell | None:
         value = getattr(arrow, "direction", None)
         if isinstance(value, str):
@@ -476,6 +829,21 @@ class GameController:
         lead = max(cells, key=lambda cell: cell[1])
         return (lead[0], int(self.state.grid.columns) - 1)
 
+    def _edge_destination_point(
+        self, points: Iterable[Point], direction: Cell,
+    ) -> Point | None:
+        points = tuple(points)
+        if not points:
+            return None
+        tip = points[-1]
+        if direction == (-1, 0):
+            return Point(tip.x, 0)
+        if direction == (1, 0):
+            return Point(tip.x, float(self.state.grid.rows))
+        if direction == (0, -1):
+            return Point(0, tip.y)
+        return Point(float(self.state.grid.columns), tip.y)
+
     def _arrow_cells(self, arrow: Any) -> set[Cell]:
         for name in ("occupied_cells", "cells", "path"):
             value = getattr(arrow, name, None)
@@ -490,6 +858,262 @@ class GameController:
                 return cells
         anchor = self._normalise_cell((getattr(arrow, "row", None), getattr(arrow, "column", None)))
         return {anchor} if anchor is not None else set()
+
+    @staticmethod
+    def _arrow_polyline(arrow: Any) -> tuple[Point, ...]:
+        """Return an arrow's ordered points, from tail to tip.
+
+        ``points`` is the canonical representation.  LineSegment-like APIs
+        are accepted for model revisions that expose ``line_segments`` first;
+        legacy occupied points/path values remain valid fallbacks.
+        """
+        raw_points = getattr(arrow, "points", None)
+        if raw_points:
+            points = GameController._coerce_points(raw_points)
+            if points:
+                return points
+
+        raw_segments = getattr(arrow, "line_segments", None)
+        if callable(raw_segments):
+            raw_segments = raw_segments()
+        if raw_segments:
+            points: list[Point] = []
+            for segment in GameController._iter_segments(raw_segments):
+                endpoints = GameController._segment_endpoints(segment)
+                if endpoints is None:
+                    continue
+                start, end = endpoints
+                if not points:
+                    points.append(start)
+                elif points[-1] != start:
+                    points.append(start)
+                points.append(end)
+            if points:
+                return tuple(points)
+
+        for name in ("occupied_points", "path", "occupied_cells"):
+            value = getattr(arrow, name, None)
+            if value:
+                points = GameController._coerce_points(value)
+                if points:
+                    return points
+
+        x, y = getattr(arrow, "x", None), getattr(arrow, "y", None)
+        if x is None:
+            x, y = getattr(arrow, "column", None), getattr(arrow, "row", None)
+        point = GameController._coerce_point((x, y)) if x is not None and y is not None else None
+        return (point,) if point is not None else ()
+
+    @staticmethod
+    def _arrow_segments(arrow: Any) -> tuple[tuple[Point, Point], ...]:
+        """Return every geometric line segment making up an arrow."""
+        raw_segments = getattr(arrow, "line_segments", None)
+        if callable(raw_segments):
+            raw_segments = raw_segments()
+        if raw_segments:
+            segments = tuple(
+                endpoints
+                for value in GameController._iter_segments(raw_segments)
+                if (endpoints := GameController._segment_endpoints(value)) is not None
+            )
+            if segments:
+                return segments
+
+        points = GameController._arrow_polyline_without_segments(arrow)
+        if len(points) >= 2:
+            return tuple(zip(points, points[1:]))
+        if points:
+            return ((points[0], points[0]),)
+        return ()
+
+    @staticmethod
+    def _arrow_polyline_without_segments(arrow: Any) -> tuple[Point, ...]:
+        """Read canonical/legacy ordered points without consulting segments."""
+        for name in ("points", "occupied_points", "path", "occupied_cells"):
+            value = getattr(arrow, name, None)
+            if value:
+                points = GameController._coerce_points(value)
+                if points:
+                    return points
+        x, y = getattr(arrow, "x", None), getattr(arrow, "y", None)
+        if x is None:
+            x, y = getattr(arrow, "column", None), getattr(arrow, "row", None)
+        point = GameController._coerce_point((x, y)) if x is not None and y is not None else None
+        return (point,) if point is not None else ()
+
+    @staticmethod
+    def _iter_segments(value: Any) -> Iterable[Any]:
+        """Normalize a single segment or a collection of segments."""
+        if isinstance(value, Mapping):
+            if any(key in value for key in ("start", "end", "from", "to", "p1", "p2")):
+                return (value,)
+            return tuple(value.values())
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+            if len(value) == 4 and all(isinstance(part, (int, float)) for part in value):
+                return (value,)
+            if len(value) == 2 and all(GameController._coerce_point(part) is not None for part in value):
+                return (value,)
+            return tuple(value)
+        try:
+            return tuple(value)
+        except TypeError:
+            return (value,)
+
+    @staticmethod
+    def _segment_endpoints(value: Any) -> tuple[Point, Point] | None:
+        names = (
+            ("start", "end"),
+            ("from_point", "to_point"),
+            ("from", "to"),
+            ("p1", "p2"),
+        )
+        first = second = None
+        if isinstance(value, Mapping):
+            for left, right in names:
+                if left in value and right in value:
+                    first, second = value[left], value[right]
+                    break
+        else:
+            for left, right in names:
+                first = getattr(value, left, None)
+                second = getattr(value, right, None)
+                if first is not None and second is not None:
+                    break
+            if first is None:
+                segment_points = getattr(value, "points", getattr(value, "vertices", None))
+                if isinstance(segment_points, Sequence) and len(segment_points) >= 2:
+                    first, second = segment_points[0], segment_points[-1]
+            if first is None and isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+                if len(value) == 4 and all(isinstance(part, (int, float)) for part in value):
+                    first, second = value[:2], value[2:]
+                elif len(value) == 2:
+                    first, second = value
+        first_point = GameController._coerce_point(first)
+        second_point = GameController._coerce_point(second)
+        if first_point is None or second_point is None:
+            return None
+        return first_point, second_point
+
+    @staticmethod
+    def _coerce_points(value: Any) -> tuple[Point, ...]:
+        if isinstance(value, (Point,)) or hasattr(value, "x") and hasattr(value, "y"):
+            point = GameController._coerce_point(value)
+            return (point,) if point is not None else ()
+        try:
+            values = tuple(value)
+        except TypeError:
+            return ()
+        points = tuple(
+            point for item in values
+            if (point := GameController._coerce_point(item)) is not None
+        )
+        return points
+
+    @staticmethod
+    def _coerce_point(value: Any) -> Point | None:
+        if isinstance(value, Point):
+            return value
+        if isinstance(value, Mapping):
+            if "x" in value and "y" in value:
+                value = (value["x"], value["y"])
+            elif "column" in value and "row" in value:
+                value = (value["column"], value["row"])
+            else:
+                return None
+        elif hasattr(value, "x") and hasattr(value, "y"):
+            value = (value.x, value.y)
+        elif hasattr(value, "column") and hasattr(value, "row"):
+            value = (value.column, value.row)
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes)) and len(value) == 2:
+            try:
+                return Point(float(value[0]), float(value[1]))
+            except (TypeError, ValueError):
+                return None
+        return None
+
+    @staticmethod
+    def _arrow_points(arrow: Any) -> set[Point]:
+        """Compatibility set view of an arrow's ordered point path."""
+        return set(GameController._arrow_polyline(arrow))
+
+    @staticmethod
+    def _arrow_tip(arrow: Any) -> Point | None:
+        points = GameController._arrow_polyline(arrow)
+        return points[-1] if points else None
+
+    @staticmethod
+    def _point_to_arrow_distance(point: Point, arrow: Any) -> float:
+        segments = GameController._arrow_segments(arrow)
+        if not segments:
+            return float("inf")
+        return min(
+            GameController._point_to_segment_distance(point, *segment)
+            for segment in segments
+        )
+
+    @staticmethod
+    def _point_to_segment_distance(point: Point, start: Point, end: Point) -> float:
+        dx, dy = end.x - start.x, end.y - start.y
+        length_squared = dx * dx + dy * dy
+        if length_squared == 0:
+            return math.hypot(point.x - start.x, point.y - start.y)
+        projection = ((point.x - start.x) * dx + (point.y - start.y) * dy) / length_squared
+        projection = max(0.0, min(1.0, projection))
+        nearest_x = start.x + projection * dx
+        nearest_y = start.y + projection * dy
+        return math.hypot(point.x - nearest_x, point.y - nearest_y)
+
+    def _ray_to_boundary(self, tip: Point, direction: Cell) -> tuple[Point, Point] | None:
+        dx, dy = direction[1], direction[0]
+        if dx > 0:
+            end = Point(float(getattr(self.state.grid, "columns", 0)), tip.y)
+        elif dx < 0:
+            end = Point(0, tip.y)
+        elif dy > 0:
+            end = Point(tip.x, float(getattr(self.state.grid, "rows", 0)))
+        elif dy < 0:
+            end = Point(tip.x, 0)
+        else:
+            return None
+        return tip, end
+
+    @staticmethod
+    def _segments_intersect(
+        first: tuple[Point, Point], second: tuple[Point, Point],
+        epsilon: float = 1e-9,
+    ) -> bool:
+        a, b = first
+        c, d = second
+
+        def cross(origin: Point, left: Point, right: Point) -> float:
+            return (left.x - origin.x) * (right.y - origin.y) - (
+                left.y - origin.y
+            ) * (right.x - origin.x)
+
+        def on_segment(origin: Point, end: Point, point: Point) -> bool:
+            return (
+                min(origin.x, end.x) - epsilon <= point.x <= max(origin.x, end.x) + epsilon
+                and min(origin.y, end.y) - epsilon <= point.y <= max(origin.y, end.y) + epsilon
+            )
+
+        orientations = (cross(a, b, c), cross(a, b, d), cross(c, d, a), cross(c, d, b))
+        if all(abs(value) <= epsilon for value in orientations):
+            return on_segment(a, b, c) or on_segment(a, b, d) or on_segment(c, d, a) or on_segment(c, d, b)
+        if abs(orientations[0]) <= epsilon and on_segment(a, b, c):
+            return True
+        if abs(orientations[1]) <= epsilon and on_segment(a, b, d):
+            return True
+        if abs(orientations[2]) <= epsilon and on_segment(c, d, a):
+            return True
+        if abs(orientations[3]) <= epsilon and on_segment(c, d, b):
+            return True
+        return (
+            orientations[0] > epsilon and orientations[1] < -epsilon
+            or orientations[0] < -epsilon and orientations[1] > epsilon
+        ) and (
+            orientations[2] > epsilon and orientations[3] < -epsilon
+            or orientations[2] < -epsilon and orientations[3] > epsilon
+        )
 
     def _read_cells(self, value: Any, *, expand_segments: bool) -> set[Cell]:
         cell = self._normalise_cell(value)
@@ -563,6 +1187,24 @@ class GameController:
             row, column = value
             if isinstance(row, int) and not isinstance(row, bool) and isinstance(column, int) and not isinstance(column, bool):
                 return row, column
+        return None
+
+    @staticmethod
+    def _normalise_point(value: Any) -> Point | None:
+        if isinstance(value, Point):
+            return value
+        if hasattr(value, "x") and hasattr(value, "y"):
+            value = (value.x, value.y)
+        if isinstance(value, Mapping):
+            if "x" in value and "y" in value:
+                value = (value["x"], value["y"])
+            else:
+                return None
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes)) and len(value) == 2:
+            try:
+                return Point(float(value[0]), float(value[1]))
+            except (TypeError, ValueError):
+                return None
         return None
 
 

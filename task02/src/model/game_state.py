@@ -69,7 +69,13 @@ class GameState:
 
     @property
     def remaining_arrows(self) -> int:
-        return sum(arrow.state is not ArrowState.REMOVED for arrow in self.arrows)
+        # FLYING_OUT arrows have already left the logical board and are only
+        # retained temporarily for their presentation animation.  They must
+        # not be reported as remaining playable arrows.
+        return sum(
+            arrow.state in (ArrowState.AVAILABLE, ArrowState.COLLISION_FEEDBACK)
+            for arrow in self.arrows
+        )
 
     @property
     def remaining_arrow_count(self) -> int:
@@ -117,7 +123,14 @@ class GameState:
         self._require_known_arrow(arrow)
         self.grid.remove_arrow(arrow)
         arrow.mark_removed()
-        if self.remaining_arrows == 0:
+        # A flying arrow is no longer playable, but it is still pending its
+        # exit animation.  Only declare victory after every arrow has reached
+        # REMOVED, otherwise the first completed animation could end the
+        # level while other arrows are still flying.
+        if not any(
+            candidate.state is not ArrowState.REMOVED
+            for candidate in self.arrows
+        ):
             self.result = GameResult.WON
             self.run_state = GameRunState.FINISHED
 
