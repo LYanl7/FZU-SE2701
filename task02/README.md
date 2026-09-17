@@ -10,11 +10,11 @@
 
 | 开始界面 | 游戏过程 |
 | --- | --- |
-| ![开始界面](images/start.png) | ![游戏过程](images/gameplay.png) |
+| ![开始界面](https://raw.githubusercontent.com/LYanl7/FZU-SE2701/main/task02/images/start.png) | ![游戏过程](https://raw.githubusercontent.com/LYanl7/FZU-SE2701/main/task02/images/gameplay.png) |
 
 | 通关界面 | 失败界面 |
 | --- | --- |
-| ![通关界面](images/success.png) | ![失败界面](images/failure.png) |
+| ![通关界面](https://raw.githubusercontent.com/LYanl7/FZU-SE2701/main/task02/images/success.png) | ![失败界面](https://raw.githubusercontent.com/LYanl7/FZU-SE2701/main/task02/images/failure.png) |
 
 ## 开发环境
 

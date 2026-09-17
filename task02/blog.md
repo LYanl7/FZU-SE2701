@@ -12,13 +12,13 @@
 
 下面的 GIF 完整展示第一关从开始游戏到通关的过程：进入棋盘、点击被阻挡的箭头并触发碰撞反馈、按顺序消除全部 52 个箭头，最后显示通关结果。
 
-![完整游玩演示：开始、碰撞反馈、消除箭头与通关](images/playthrough.gif)
+![完整游玩演示：开始、碰撞反馈、消除箭头与通关](https://raw.githubusercontent.com/LYanl7/FZU-SE2701/main/task02/images/playthrough.gif)
 
 
 <details>
 <summary>查看失败界面</summary>
 
-![失误耗尽后的失败界面](images/failure.png)
+![失误耗尽后的失败界面](https://raw.githubusercontent.com/LYanl7/FZU-SE2701/main/task02/images/failure.png)
 
 </details>
 
