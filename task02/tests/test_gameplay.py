@@ -12,6 +12,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from logic.game_controller import GameController
+from logic.level_generator import LevelGenerator
 from model.arrow import Arrow, ArrowState, LineSegment, Point
 from model.game_state import GameResult, GameState
 from model.grid import Grid
@@ -19,30 +20,104 @@ from presentation.app import GameApp
 
 
 class PointModelTests(unittest.TestCase):
-    def test_default_levels_use_native_inset_points(self) -> None:
-        levels = GameController._default_levels()
+    def test_generated_level_is_reproducible_non_overlapping_and_solvable(self) -> None:
+        generator = LevelGenerator()
 
-        self.assertEqual([level.level for level in levels], [1, 2])
-        self.assertTrue(
-            any(len(arrow.line_segments) >= 3 for arrow in levels[1].arrows)
+        first = generator.generate(level=8, seed=2701)
+        second = generator.generate(level=8, seed=2701)
+
+        first_layout = [
+            (arrow.points, arrow.direction, arrow.shape_name)
+            for arrow in first.state.arrows
+        ]
+        second_layout = [
+            (arrow.points, arrow.direction, arrow.shape_name)
+            for arrow in second.state.arrows
+        ]
+        self.assertEqual(first_layout, second_layout)
+        self.assertEqual(len(first.solution), len(first.state.arrows))
+        self.assertGreaterEqual(len(first.state.arrows), 50)
+        self.assertGreaterEqual(
+            sum(
+                len(arrow.line_segments) >= 2
+                and len({point.x for point in arrow.points}) > 1
+                and len({point.y for point in arrow.points}) > 1
+                for arrow in first.state.arrows
+            ),
+            round(len(first.state.arrows) * 0.6),
         )
-        for level in levels:
-            for arrow in level.arrows:
-                self.assertGreaterEqual(len(arrow.points), 2)
-                self.assertFalse(arrow.path)
-                self.assertFalse(arrow.segments)
-                self.assertEqual(len(arrow.line_segments), len(arrow.points) - 1)
-                self.assertEqual(arrow.front_point, arrow.points[-1])
-                self.assertGreater(arrow.x, 0)
-                self.assertGreater(arrow.y, 0)
-                self.assertLess(arrow.x, level.grid.columns)
-                self.assertLess(arrow.y, level.grid.rows)
-                self.assertTrue(
-                    all(
-                        point.x.is_integer() and point.y.is_integer()
-                        for point in arrow.points
-                    )
-                )
+        self.assertGreaterEqual(
+            sum(len(arrow.line_segments) >= 3 for arrow in first.state.arrows),
+            round(len(first.state.arrows) * 0.3),
+        )
+        self.assertGreaterEqual(
+            len({arrow.shape_name for arrow in first.state.arrows}), 4
+        )
+        direction_counts = {
+            direction: sum(arrow.direction == direction for arrow in first.state.arrows)
+            for direction in ("up", "right", "down", "left")
+        }
+        # Direction is a str-backed enum, so string comparison remains a
+        # supported compatibility view.
+        self.assertTrue(
+            all(
+                count >= round(len(first.state.arrows) * 0.15)
+                for count in direction_counts.values()
+            )
+        )
+        self.assertGreaterEqual(
+            sum(
+                sum(segment.length for segment in arrow.line_segments) >= 1.1
+                for arrow in first.state.arrows
+            ),
+            round(len(first.state.arrows) * 0.6),
+        )
+        self.assertTrue(
+            any(first.state.grid.blocking_arrows(arrow) for arrow in first.state.arrows)
+        )
+        left = first.state.grid.columns * LevelGenerator.HORIZONTAL_MARGIN_RATIO
+        right = first.state.grid.columns * (
+            1 - LevelGenerator.HORIZONTAL_MARGIN_RATIO
+        )
+        self.assertTrue(
+            all(
+                left < point.x < right
+                for arrow in first.state.arrows
+                for point in arrow.points
+            )
+        )
+
+    def test_default_controller_starts_random_and_generates_every_next_level(self) -> None:
+        controller = GameController(generation_seed=99)
+
+        self.assertIsNone(controller._levels)
+        self.assertEqual(controller.current_level, 1)
+        self.assertGreaterEqual(len(controller.state.arrows), 40)
+
+        controller.phase = controller.PHASE_LEVEL_COMPLETE
+
+        events = controller.next_level()
+
+        self.assertEqual(events[0]["type"], controller.EVENT_LEVEL_GENERATED)
+        self.assertEqual(controller.current_level, 2)
+        self.assertEqual(controller.phase, controller.PHASE_PLAYING)
+        self.assertEqual(
+            len(controller._level_generator.solution_order(controller.state)),
+            len(controller.state.arrows),
+        )
+
+    def test_generated_arrows_are_native_polylines_inside_the_board(self) -> None:
+        state = LevelGenerator().generate(level=5, seed=2026).state
+
+        for arrow in state.arrows:
+            self.assertGreaterEqual(len(arrow.points), 2)
+            self.assertFalse(arrow.path)
+            self.assertFalse(arrow.segments)
+            self.assertEqual(len(arrow.line_segments), len(arrow.points) - 1)
+            self.assertEqual(arrow.front_point, arrow.points[-1])
+            self.assertTrue(
+                all(state.grid.in_bounds_point(point) for point in arrow.points)
+            )
 
     def test_adjacent_points_are_the_arrows_line_segments(self) -> None:
         arrow = Arrow(
@@ -123,10 +198,19 @@ class ArrowLifecycleTests(unittest.TestCase):
         self.assertEqual(GameApp._animation_duration(events), 0.35)
 
     def test_default_flight_is_slower_and_block_event_has_a_safe_target(self) -> None:
-        controller = GameController()
-        blocked_arrow = controller.state.arrows[1]
+        blocked_arrow = Arrow(
+            points=(Point(1.0, 3.0), Point(2.0, 3.0)),
+            direction="right",
+        )
+        blocker = Arrow(
+            points=(Point(4.0, 2.0), Point(4.0, 4.0)),
+            direction="down",
+        )
+        controller = GameController(
+            GameState(grid=Grid(6, 6), arrows=[blocked_arrow, blocker])
+        )
 
-        events = controller.handle_point(2.0, 3.0)
+        events = controller.handle_point(1.5, 3.0)
         event = events[0]
 
         self.assertEqual(controller.animation_duration, 0.7)

@@ -55,12 +55,11 @@ class GameApp:
     LOST = "lost"
 
     COLORS = {
-        "background": (18, 24, 38),
+        "background": (27, 38, 58),
         "panel": (29, 39, 61),
         "panel_light": (39, 53, 80),
-        "board": (12, 17, 29),
-        "cell": (31, 43, 67),
-        "cell_hover": (44, 61, 91),
+        "board": (18, 24, 38),
+        "board_edge": (48, 66, 94),
         "accent": (93, 205, 255),
         "accent_dark": (47, 132, 183),
         "text": (235, 242, 255),
@@ -99,11 +98,13 @@ class GameApp:
         self.controller = controller or self._make_controller()
         self.screen_name = self.START
         self._running = True
-        self._hovered_cell: tuple[int, int] | None = None
-        self._hovered_point: tuple[float, float] | None = None
         self._flight: _Flight | None = None
         self._blocked_flight: _BlockedFlight | None = None
-        self._fonts: dict[int, Any] = {}
+        self._fonts: dict[tuple[int, bool], Any] = {}
+        self._clock_icon: Any | None = None
+        self._clock_icon_loaded = False
+        self._board_zoom = 1.0
+        self._board_pan = (0.0, 0.0)
 
     @staticmethod
     def _make_controller() -> Any:
@@ -133,11 +134,10 @@ class GameApp:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 self._running = False
-            elif event.type == pygame.MOUSEMOTION:
-                self._hovered_point = self._point_at(event.pos)
-                self._hovered_cell = self._cell_at(event.pos)
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 self._handle_click(event.pos)
+            elif event.type == pygame.MOUSEWHEEL and self.screen_name == self.PLAYING:
+                self._zoom_board(event.y, pygame.mouse.get_pos())
 
     def _handle_click(self, position: tuple[int, int]) -> None:
         if self.screen_name in (self.START, self.WON, self.LOST):
@@ -152,6 +152,14 @@ class GameApp:
 
         if self._button_rect("restart").collidepoint(position):
             self._restart_game()
+            return
+
+        if self._button_rect("zoom_out").collidepoint(position):
+            self._zoom_board(-1)
+            return
+
+        if self._button_rect("zoom_in").collidepoint(position):
+            self._zoom_board(1)
             return
 
         if self._point_at(position) is not None:
@@ -169,6 +177,7 @@ class GameApp:
                 self.screen_name = self.PLAYING
                 self._flight = None
                 self._blocked_flight = None
+                self._reset_board_view()
                 return
         self._restart_game()
         self._sync_screen_from_state()
@@ -204,6 +213,7 @@ class GameApp:
         self.screen_name = self.PLAYING
         self._flight = None
         self._blocked_flight = None
+        self._reset_board_view()
 
     def _handle_board_click(
         self,
@@ -359,6 +369,13 @@ class GameApp:
         clicked_point: tuple[float, float],
     ) -> None:
         start_board = (float(arrow["x"]), float(arrow["y"]))
+        raw_points = arrow.get("points") or ()
+        ordered_points = [
+            point
+            for value in raw_points
+            if (point := self._point_coordinate(value)) is not None
+        ]
+        tip_board = ordered_points[-1] if ordered_points else start_board
         direction = self._direction(arrow.get("direction", 0))
         vector = {
             "up": (0.0, -1.0),
@@ -369,12 +386,12 @@ class GameApp:
         requested = self._blocked_destination(result)
         if requested is None:
             requested = (
-                start_board[0] + vector[0] * 0.24,
-                start_board[1] + vector[1] * 0.24,
+                tip_board[0] + vector[0] * 0.24,
+                tip_board[1] + vector[1] * 0.24,
             )
         requested_distance = (
-            (requested[0] - start_board[0]) * vector[0]
-            + (requested[1] - start_board[1]) * vector[1]
+            (requested[0] - tip_board[0]) * vector[0]
+            + (requested[1] - tip_board[1]) * vector[1]
         )
         requested_distance = max(0.0, requested_distance)
         safe_distance = self._safe_blocked_distance(
@@ -484,7 +501,7 @@ class GameApp:
         """Account for a single-point arrow's visible shaft before a blocker."""
         if len(self._occupied_points(arrow)) > 1:
             return 0.0
-        board = self._board_rect()
+        board = self._content_rect()
         rows, columns = self._grid_size()
         pixel_units = board.width / columns if vector[0] else board.height / rows
         if pixel_units <= 0:
@@ -566,10 +583,7 @@ class GameApp:
         # bottom where it cannot cover the board.
         self._text("一箭又一箭", (42, 30), 40, self.COLORS["text"])
         board = self._board_rect()
-        self._pygame.draw.rect(
-            self.screen, self.COLORS["board"], board, border_radius=16
-        )
-        self._draw_grid(board)
+        self._draw_board_surface(board)
         for arrow in self._arrows():
             if arrow.get("active", True):
                 self._draw_arrow(arrow)
@@ -623,9 +637,10 @@ class GameApp:
             remaining = 0
         self._draw_arrow_counter(remaining)
 
+        previous_clip = self.screen.get_clip()
+        self.screen.set_clip(self._base_board_rect())
         board = self._board_rect()
-        pygame.draw.rect(self.screen, self.COLORS["board"], board, border_radius=16)
-        self._draw_grid(board)
+        self._draw_board_surface(board)
         for arrow in arrows:
             if arrow.get("active", True) and not self._is_blocked_arrow(arrow):
                 self._draw_arrow(arrow)
@@ -636,8 +651,37 @@ class GameApp:
                 self._blocked_flight.arrow,
                 self._blocked_offset(self._blocked_flight),
             )
+        self.screen.set_clip(previous_clip)
 
         self._draw_button(self._button_rect("restart"), "重新开始", primary=False)
+        self._draw_button(self._button_rect("zoom_out"), "－", primary=False)
+        zoom_center_x = self.window_size[0] // 2
+        zoom_y = self._base_board_rect().bottom + 24
+        self._text(
+            f"{round(self._board_zoom * 100)}%",
+            (zoom_center_x, zoom_y),
+            15,
+            self.COLORS["muted"],
+            center=True,
+        )
+        self._draw_button(self._button_rect("zoom_in"), "＋", primary=False)
+
+    def _draw_board_surface(self, board: Any) -> None:
+        pygame = self._pygame
+        radius = 16
+        pygame.draw.rect(
+            self.screen,
+            self.COLORS["board_edge"],
+            board,
+            border_radius=radius,
+        )
+        inner = board.inflate(-2, -2)
+        pygame.draw.rect(
+            self.screen,
+            self.COLORS["board"],
+            inner,
+            border_radius=max(0, radius - 2),
+        )
 
     def _is_blocked_arrow(self, arrow: dict[str, Any]) -> bool:
         blocked = self._blocked_flight
@@ -652,7 +696,7 @@ class GameApp:
         self._draw_center_card(title, subtitle)
         self._draw_button(
             self._button_rect("primary"),
-            "再玩一次" if won else "重新开始",
+            "下一关" if won else "重新开始",
             primary=True,
         )
 
@@ -665,11 +709,52 @@ class GameApp:
     ) -> None:
         """Draw level, attempts, and elapsed time in a centered stack."""
         width = self.window_size[0]
-        label = self._font(20).render(f"第 {level} 关", True, self.COLORS["text"])
+        label = self._render_text(f"第 {level} 关", 20, self.COLORS["text"])
         self.screen.blit(label, label.get_rect(center=(width // 2, 24)))
         self._draw_hearts(mistakes, center_x=width // 2, top=42)
-        timer = self._font(17).render(elapsed, True, self.COLORS["muted"])
-        self.screen.blit(timer, timer.get_rect(center=(width // 2, 91)))
+        timer = self._render_text(elapsed, 17, self.COLORS["muted"])
+        icon = self._get_clock_icon(18)
+        gap = 7
+        total_width = icon.get_width() + gap + timer.get_width()
+        left = width // 2 - total_width // 2
+        self.screen.blit(icon, icon.get_rect(midleft=(left, 91)))
+        self.screen.blit(
+            timer,
+            timer.get_rect(midleft=(left + icon.get_width() + gap, 91)),
+        )
+
+    def _get_clock_icon(self, size: int) -> Any:
+        """Load the SVG clock icon once, with a native-Pygame fallback."""
+        pygame = self._pygame
+        if not self._clock_icon_loaded:
+            self._clock_icon_loaded = True
+            icon_path = Path(__file__).parent / "assets" / "clock.svg"
+            try:
+                self._clock_icon = pygame.image.load(str(icon_path))
+            except (OSError, RuntimeError, pygame.error):
+                self._clock_icon = None
+        if self._clock_icon is not None:
+            return pygame.transform.smoothscale(self._clock_icon, (size, size))
+
+        fallback = pygame.Surface((size, size), pygame.SRCALPHA)
+        color = self.COLORS["muted"]
+        center = (size // 2, size // 2)
+        pygame.draw.circle(fallback, color, center, size // 2 - 1, width=2)
+        pygame.draw.line(
+            fallback,
+            color,
+            center,
+            (center[0], max(2, center[1] - size // 4)),
+            2,
+        )
+        pygame.draw.line(
+            fallback,
+            color,
+            center,
+            (min(size - 2, center[0] + size // 4), center[1]),
+            2,
+        )
+        return fallback
 
     def _draw_arrow_counter(self, remaining: int) -> None:
         """Draw a compact arrow icon and count in the upper-right corner."""
@@ -693,7 +778,7 @@ class GameApp:
                 (center[0] + 10, center[1] + 9),
             ),
         )
-        count = self._font(20).render(str(remaining), True, self.COLORS["text"])
+        count = self._render_text(str(remaining), 20, self.COLORS["text"])
         self.screen.blit(count, count.get_rect(midleft=(center[0] + 34, center[1])))
 
     def _draw_hearts(
@@ -778,41 +863,6 @@ class GameApp:
         self._text(label, (x, y), 14, self.COLORS["muted"])
         self._text(value, (x, y + 21), 23, value_color or self.COLORS["text"])
 
-    def _draw_grid(self, board: Any) -> None:
-        """Draw a sparse point lattice instead of filled grid cells."""
-        pygame = self._pygame
-        rows, columns = self._grid_size()
-        cell_w, cell_h = board.width / columns, board.height / rows
-        radius = max(1, min(3, round(min(cell_w, cell_h) * 0.035)))
-        point_set = {
-            (float(column), float(row))
-            for row in range(rows + 1)
-            for column in range(columns + 1)
-        }
-        # Do not leave lattice dots underneath the geometry of a static arrow:
-        # an exposed dot at a tip, tail, or bend reads as a dark artifact.
-        # Non-integral model points are deliberately not added to the lattice;
-        # they are represented by the arrow itself and reappear naturally once
-        # a flying arrow is no longer active.
-        static_arrow_points: set[tuple[float, float]] = set()
-        for arrow in self._arrows():
-            if arrow.get("active", True):
-                static_arrow_points.update(self._occupied_points(arrow))
-        point_set.difference_update(static_arrow_points)
-        for point_x, point_y in point_set:
-            pixel_x, pixel_y = self._board_point_to_pixel(point_x, point_y)
-            color = self.COLORS["cell"]
-            if self._hovered_point is not None:
-                distance = (
-                    (self._hovered_point[0] - point_x) ** 2
-                    + (self._hovered_point[1] - point_y) ** 2
-                ) ** 0.5
-                if distance < 0.35:
-                    color = self.COLORS["cell_hover"]
-            pygame.draw.circle(
-                self.screen, color, (round(pixel_x), round(pixel_y)), radius
-            )
-
     def _draw_arrow(
         self,
         arrow: dict[str, Any],
@@ -873,40 +923,125 @@ class GameApp:
         if hovered:
             color = tuple(min(255, value + 18) for value in color)
         pygame.draw.rect(self.screen, color, rect, border_radius=10)
-        text_color = self.COLORS["background"] if primary else self.COLORS["text"]
+        text_color = self.COLORS["board"] if primary else self.COLORS["text"]
         self._text(label, rect.center, 17, text_color, center=True)
 
-    def _font(self, size: int) -> Any:
-        if size not in self._fonts:
-            font = None
-            windows_dir = os.environ.get("WINDIR") or os.environ.get("windir")
-            if windows_dir:
-                font_dir = Path(windows_dir) / "Fonts"
-                font_candidates = (
-                    font_dir / "msyh.ttc",
-                    font_dir / "msyhbd.ttc",
-                    font_dir / "simhei.ttf",
-                    font_dir / "simsun.ttc",
-                    font_dir / "arial.ttf",
-                )
-            else:
-                font_candidates = ()
+    def _font(self, size: int, *, cjk: bool = False) -> Any:
+        key = (size, cjk)
+        if key in self._fonts:
+            return self._fonts[key]
 
-            for font_path in font_candidates:
-                if not font_path.is_file():
-                    continue
+        pygame = self._pygame
+        windows_dir = os.environ.get("WINDIR") or os.environ.get("windir")
+        font_dir = Path(windows_dir) / "Fonts" if windows_dir else None
+        if cjk:
+            candidates = (
+                font_dir / "simsun.ttc",
+                font_dir / "simhei.ttf",
+                font_dir / "msyh.ttc",
+                font_dir / "msyhbd.ttc",
+            ) if font_dir else ()
+            family_fallbacks = ("SimSun", "SimHei", "Microsoft YaHei")
+        else:
+            # Some SDL_ttf builds can open Windows bitmap FON files. If not,
+            # fall back to familiar installed monospace faces without fetching
+            # or bundling any external font assets.
+            candidates = (
+                font_dir / "vgafix.fon",
+                font_dir / "vgasys.fon",
+                font_dir / "cvgafix.fon",
+                font_dir / "lucon.ttf",
+                font_dir / "cour.ttf",
+                font_dir / "consola.ttf",
+            ) if font_dir else ()
+            family_fallbacks = ("Lucida Console", "Courier New", "Consolas")
+
+        font = None
+        for font_path in candidates:
+            if not font_path.is_file():
+                continue
+            try:
+                font = pygame.font.Font(str(font_path), size)
+                break
+            except (OSError, RuntimeError, TypeError, pygame.error):
+                continue
+
+        if font is None:
+            for family in family_fallbacks:
                 try:
-                    font = self._pygame.font.Font(str(font_path), size)
-                    break
-                except (OSError, RuntimeError, TypeError):
-                    # A font file may exist but still be unsupported by the
-                    # installed SDL_ttf/Pygame combination. Try the next one.
+                    font = pygame.font.SysFont(family, size)
+                    if font is not None:
+                        break
+                except (OSError, RuntimeError, TypeError, pygame.error):
                     continue
+        if font is None:
+            font = pygame.font.Font(None, size)
+        self._fonts[key] = font
+        return font
 
-            if font is None:
-                font = self._pygame.font.Font(None, size)
-            self._fonts[size] = font
-        return self._fonts[size]
+    @staticmethod
+    def _is_cjk(character: str) -> bool:
+        codepoint = ord(character)
+        return (
+            0x2E80 <= codepoint <= 0x9FFF
+            or 0xF900 <= codepoint <= 0xFAFF
+            or 0x3000 <= codepoint <= 0x303F
+            or 0xFF00 <= codepoint <= 0xFFEF
+        )
+
+    def _render_text(
+        self, value: str, size: int, color: tuple[int, int, int]
+    ) -> Any:
+        """Render retro monospace ASCII and reliable CJK glyphs in one line."""
+        pygame = self._pygame
+        text = str(value)
+        if not text:
+            text = " "
+
+        runs: list[tuple[Any, int, int]] = []
+
+        def append_run(start: int, end: int, is_cjk: bool) -> None:
+            font = self._font(size, cjk=is_cjk)
+            image = font.render(text[start:end], is_cjk, color)
+            ascent = font.get_ascent()
+            descent = max(0, -font.get_descent())
+            # Windows VGA FON fonts expose a fixed 8x16-style bitmap even
+            # when asked for larger point sizes. Nearest-neighbour scaling
+            # preserves their pixel character while keeping HUD text legible.
+            if not is_cjk and font.get_height() < size * 0.9:
+                scale = size / max(1, font.get_height())
+                image = pygame.transform.scale(
+                    image,
+                    (
+                        max(1, round(image.get_width() * scale)),
+                        max(1, round(image.get_height() * scale)),
+                    ),
+                )
+                ascent = round(ascent * scale)
+                descent = round(descent * scale)
+            runs.append((image, ascent, descent))
+
+        start = 0
+        current_is_cjk = self._is_cjk(text[0])
+        for index in range(1, len(text)):
+            is_cjk = self._is_cjk(text[index])
+            if is_cjk != current_is_cjk:
+                append_run(start, index, current_is_cjk)
+                start = index
+                current_is_cjk = is_cjk
+        append_run(start, len(text), current_is_cjk)
+
+        ascent = max(run_ascent for _, run_ascent, _ in runs)
+        descent = max(run_descent for _, _, run_descent in runs)
+        width = sum(image.get_width() for image, _, _ in runs)
+        result = pygame.Surface(
+            (max(1, width), max(1, ascent + descent)), pygame.SRCALPHA
+        )
+        left = 0
+        for image, run_ascent, _ in runs:
+            result.blit(image, (left, ascent - run_ascent))
+            left += image.get_width()
+        return result
 
     def _text(
         self,
@@ -917,7 +1052,7 @@ class GameApp:
         *,
         center: bool = False,
     ) -> None:
-        image = self._font(size).render(str(value), True, color)
+        image = self._render_text(str(value), size, color)
         rect = (
             image.get_rect(center=position)
             if center
@@ -926,10 +1061,66 @@ class GameApp:
         self.screen.blit(image, rect)
 
     def _board_rect(self) -> Any:
-        margin_x, top, bottom = 42, 153, 92
-        width = self.window_size[0] - margin_x * 2
-        height = self.window_size[1] - top - bottom
-        return self._pygame.Rect(margin_x, top, width, height)
+        """Return the fixed board viewport; zoom never changes this region."""
+        return self._base_board_rect()
+
+    def _content_rect(self) -> Any:
+        """Return the transformed coordinate plane rendered inside the board."""
+        base = self._base_board_rect()
+        width = max(1, round(base.width * self._board_zoom))
+        height = max(1, round(base.height * self._board_zoom))
+        center = (
+            round(base.centerx + self._board_pan[0]),
+            round(base.centery + self._board_pan[1]),
+        )
+        rect = self._pygame.Rect(0, 0, width, height)
+        rect.center = center
+        return rect
+
+    def _base_board_rect(self) -> Any:
+        # The board viewport must not jump when the start screen transitions
+        # into gameplay.  Both screens reserve the same HUD/header height.
+        top = 152
+        bottom = 96
+        available_height = max(1, self.window_size[1] - top - bottom)
+        return self._pygame.Rect(0, top, self.window_size[0], available_height)
+
+    def _reset_board_view(self) -> None:
+        self._board_zoom = 1.0
+        self._board_pan = (0.0, 0.0)
+
+    def _zoom_board(
+        self, steps: int, anchor: tuple[int, int] | None = None
+    ) -> None:
+        """Zoom around the cursor while keeping the board inside its viewport."""
+        old_rect = self._content_rect()
+        base = self._base_board_rect()
+        if (
+            anchor is None
+            or not old_rect.collidepoint(anchor)
+            or not base.collidepoint(anchor)
+        ):
+            anchor = old_rect.center
+        rows, columns = self._grid_size()
+        board_x = (anchor[0] - old_rect.left) / old_rect.width * columns
+        board_y = (anchor[1] - old_rect.top) / old_rect.height * rows
+        self._board_zoom = max(
+            0.7, min(2.4, self._board_zoom * (1.15 ** int(steps)))
+        )
+        new_width = max(1, round(base.width * self._board_zoom))
+        new_height = max(1, round(base.height * self._board_zoom))
+        desired_left = anchor[0] - board_x / columns * new_width
+        desired_top = anchor[1] - board_y / rows * new_height
+        desired_center = (
+            desired_left + new_width / 2,
+            desired_top + new_height / 2,
+        )
+        max_pan_x = max(0.0, (new_width - base.width) / 2)
+        max_pan_y = max(0.0, (new_height - base.height) / 2)
+        self._board_pan = (
+            max(-max_pan_x, min(max_pan_x, desired_center[0] - base.centerx)),
+            max(-max_pan_y, min(max_pan_y, desired_center[1] - base.centery)),
+        )
 
     def _button_rect(self, name: str) -> Any:
         pygame = self._pygame
@@ -947,6 +1138,20 @@ class GameApp:
                 210,
                 52,
             )
+        if name == "zoom_out":
+            return pygame.Rect(
+                self.window_size[0] // 2 - 104,
+                self._base_board_rect().bottom + 3,
+                42,
+                42,
+            )
+        if name == "zoom_in":
+            return pygame.Rect(
+                self.window_size[0] // 2 + 62,
+                self._base_board_rect().bottom + 3,
+                42,
+                42,
+            )
         return pygame.Rect(42, 102, 128, 42)
 
     def _grid_size(self) -> tuple[int, int]:
@@ -957,7 +1162,7 @@ class GameApp:
         return max(1, rows), max(1, columns)
 
     def _cell_size(self) -> float:
-        board = self._board_rect()
+        board = self._content_rect()
         rows, columns = self._grid_size()
         return min(board.width / columns, board.height / rows)
 
@@ -966,7 +1171,7 @@ class GameApp:
         return self._board_point_to_pixel(float(column) + 0.5, float(row) + 0.5)
 
     def _board_point_to_pixel(self, x: float, y: float) -> tuple[float, float]:
-        board = self._board_rect()
+        board = self._content_rect()
         rows, columns = self._grid_size()
         return (
             board.left + x * board.width / columns,
@@ -975,8 +1180,11 @@ class GameApp:
 
     def _point_at(self, position: tuple[int, int]) -> tuple[float, float] | None:
         """Convert a pixel position to the continuous board coordinate."""
-        board = self._board_rect()
-        if not board.collidepoint(position):
+        board = self._content_rect()
+        if (
+            not board.collidepoint(position)
+            or not self._base_board_rect().collidepoint(position)
+        ):
             return None
         rows, columns = self._grid_size()
         return (

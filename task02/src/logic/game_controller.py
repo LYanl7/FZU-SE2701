@@ -18,9 +18,9 @@ import itertools
 import math
 from typing import Any
 
-from model.arrow import Arrow, Point
+from logic.level_generator import LevelGenerator
+from model.arrow import Point
 from model.game_state import GameState
-from model.grid import Grid
 
 Cell = tuple[int, int]
 Event = dict[str, Any]
@@ -40,6 +40,7 @@ class GameController:
     EVENT_ACTION_IGNORED = "action_ignored"
     EVENT_INVALID_ARROW = "invalid_arrow"
     EVENT_NO_NEXT_LEVEL = "no_next_level"
+    EVENT_LEVEL_GENERATED = "level_generated"
 
     PHASE_PLAYING = "playing"
     PHASE_LEVEL_COMPLETE = "level_complete"
@@ -58,6 +59,7 @@ class GameController:
         max_mistakes: int = 3,
         levels: Sequence[Any] | None = None,
         animation_duration: float = 0.7,
+        generation_seed: int | None = None,
     ) -> None:
         if not isinstance(max_mistakes, int) or isinstance(max_mistakes, bool):
             raise TypeError("max_mistakes must be an integer")
@@ -67,16 +69,18 @@ class GameController:
             raise TypeError("animation_duration must be numeric")
         if animation_duration < 0 or not math.isfinite(animation_duration):
             raise ValueError("animation_duration must be finite and non-negative")
+        if generation_seed is not None and (
+            not isinstance(generation_seed, int) or isinstance(generation_seed, bool)
+        ):
+            raise TypeError("generation_seed must be an integer or None")
 
         self.state = state if state is not None else GameState()
         self.max_mistakes = max_mistakes
         self.animation_duration = float(animation_duration)
-        # Defaults are opt-in through the no-argument constructor only.  A
-        # caller-provided state or level list always remains authoritative.
-        if state is None and levels is None:
-            self._levels = self._default_levels()
-        else:
-            self._levels = list(levels) if levels is not None else None
+        self._level_generator = LevelGenerator()
+        self._generation_seed = generation_seed
+        self._auto_generate_levels = state is None and levels is None
+        self._levels = list(levels) if levels is not None else None
         self._level_index = 0
         self.current_level = 1
         self.phase = self.PHASE_PLAYING
@@ -92,62 +96,13 @@ class GameController:
         self._set_mistakes(max_mistakes)
         self._sync_grid()
 
-        if state is None and self._levels:
+        if self._auto_generate_levels:
+            generated = self._level_generator.generate(
+                1, seed=self._seed_for_level(1)
+            )
+            self._load_level(generated.state)
+        elif state is None and self._levels:
             self._load_level(self._levels[0])
-
-    @staticmethod
-    def _default_levels() -> list[GameState]:
-        """Return fresh, small levels used by the no-argument controller.
-
-        The first level demonstrates straight arrows.  The second combines
-        point-native arrows with different directions.  Each level is solvable by
-        removing the independently exposed arrows before the arrows behind
-        them.
-        """
-        level_one = GameState(
-            grid=Grid(rows=6, columns=6),
-            arrows=[
-                # Exposed arrow: remove this before the horizontal arrow.
-                Arrow(
-                    points=(Point(4, 3), Point(4, 2), Point(4, 1)),
-                    direction=0,
-                ),
-                Arrow(
-                    points=(Point(1, 3), Point(2, 3), Point(3, 3)),
-                    direction=1,
-                ),
-                Arrow(
-                    points=(Point(5, 5), Point(4, 5), Point(3, 5)),
-                    direction="left",
-                ),
-            ],
-        )
-        # Canonical point paths are ordered from tail to tip.  The right-facing
-        # three-segment arrow at y=4 is blocked by the up-facing arrow at x=5,
-        # while the other arrows are initially exposed.
-        level_two = GameState(
-            grid=Grid(rows=7, columns=7),
-            arrows=[
-                # This exposed arrow blocks the right-facing arrow's path
-                # until it has been removed first.
-                Arrow(
-                    points=(Point(5, 4), Point(5, 3), Point(5, 2)),
-                    direction="up",
-                ),
-                Arrow(
-                    points=(
-                        Point(1, 2), Point(2, 2), Point(2, 4), Point(4, 4),
-                    ),
-                    direction="right",
-                ),
-                Arrow(
-                    points=(Point(6, 6), Point(5, 6), Point(4, 6)),
-                    direction="left",
-                ),
-            ],
-            level=2,
-        )
-        return [level_one, level_two]
 
     @property
     def mistakes_remaining(self) -> int:
@@ -414,23 +369,51 @@ class GameController:
         ))
 
     def next_level(self) -> list[Event]:
-        """Load the next configured level after the current one is complete."""
+        """Load the next configured level, generating one when defaults end."""
         if self.phase != self.PHASE_LEVEL_COMPLETE:
             return self._publish(self._event(
                 self.EVENT_ACTION_IGNORED,
                 action="next_level", reason="current_level_not_complete",
             ))
-        if not self._levels or self._level_index + 1 >= len(self._levels):
+        if self._levels and self._level_index + 1 < len(self._levels):
+            self._level_index += 1
+            self.current_level += 1
+            self._load_level(self._levels[self._level_index])
+            return self._publish(self._event(
+                self.EVENT_LEVEL_STARTED,
+                mistakes_remaining=self.mistakes_remaining,
+                remaining_arrows=self.remaining_arrows,
+            ))
+        if self._auto_generate_levels:
+            return self.generate_level(self.current_level + 1)
+        else:
             return self._publish(self._event(self.EVENT_NO_NEXT_LEVEL))
 
-        self._level_index += 1
-        self.current_level += 1
-        self._load_level(self._levels[self._level_index])
+    def generate_level(
+        self, level: int | None = None, *, seed: int | None = None
+    ) -> list[Event]:
+        """Generate and immediately start a verified-solvable random level."""
+        target_level = self.current_level if level is None else level
+        if seed is None:
+            seed = self._seed_for_level(target_level)
+        generated = self._level_generator.generate(target_level, seed=seed)
+        self.current_level = target_level
+        self._auto_generate_levels = True
+        self._levels = None
+        self._level_index = 0
+        self._load_level(generated.state)
         return self._publish(self._event(
-            self.EVENT_LEVEL_STARTED,
+            self.EVENT_LEVEL_GENERATED,
+            seed=generated.seed,
+            solution=generated.solution,
             mistakes_remaining=self.mistakes_remaining,
             remaining_arrows=self.remaining_arrows,
         ))
+
+    def _seed_for_level(self, level: int) -> int | None:
+        if self._generation_seed is None:
+            return None
+        return self._generation_seed + level * 1_000_003
 
     def drain_events(self) -> list[Event]:
         """Return and clear events emitted since the previous drain."""
@@ -505,6 +488,8 @@ class GameController:
             pass
 
     def _is_final_level(self) -> bool:
+        if self._auto_generate_levels:
+            return False
         return not self._levels or self._level_index + 1 >= len(self._levels)
 
     def _arrow_at(self, cell: Cell) -> Any | None:
