@@ -278,72 +278,15 @@ npm start
 
 测试方法按“阅读工具的最小示例—找出函数的输入和预期结果—构造正常与异常数据—执行断言—将修复补成回归测试”的顺序整理。相关工具用法参考 [Node.js 测试文档](https://nodejs.org/docs/latest-v22.x/api/test.html) 和 [Playwright 编写测试文档](https://playwright.dev/docs/writing-tests)。
 
-### 2. 一份可以照着做的简易教程
+### 2. 单元测试简易教程
 
-**第一步：写清楚规则。** 以底部导航为例，进入 `/messages` 应只有“消息”高亮；进入 `/messages/42` 时仍应高亮“消息”；进入 `/me` 才高亮“我的”。这样可以先确定预期行为，再检查实现。
+编写单元测试，可以按“明确规则—设计用例—准备环境—执行断言—清理与回归”的步骤进行：
 
-**第二步：提取可独立调用的函数。** 将路径判断从组件中提取为 `isActiveTab(path, href)`，测试就不需要启动网页和数据库。函数见 [`nav-active.ts`](https://github.com/LYanl7/052402132-102401507/blob/c83f7b0/apps/web/src/components/nav-active.ts)：
-
-```ts
-export function isActiveTab(path: string, href: string): boolean {
-  if (href === "/") return path === "/";
-
-  if (href === "/me") {
-    return path === "/me" || path.startsWith("/me/") || path === "/my-posts";
-  }
-
-  return path === href || path.startsWith(href + "/");
-}
-```
-
-**第三步：准备输入、执行函数、断言输出。** 以下是项目 [`nav-active.test.ts`](https://github.com/LYanl7/052402132-102401507/blob/c83f7b0/apps/web/test/nav-active.test.ts) 的关键测试，省略了其余用例：
-
-```ts
-import assert from "node:assert/strict";
-import test from "node:test";
-import { isActiveTab } from "../src/components/nav-active.ts";
-
-const TABS = ["/", "/nearby", "/publish", "/messages", "/me"];
-const activeTabs = (path: string) =>
-  TABS.filter((href) => isActiveTab(path, href));
-
-test("The messages list activates the messages tab and nothing else", () => {
-  assert.deepEqual(activeTabs("/messages"), ["/messages"]);
-});
-
-test("A conversation page keeps the messages tab active", () => {
-  assert.deepEqual(activeTabs("/messages/42"), ["/messages"]);
-});
-
-test("A longer path that merely starts with a tab name is not a match", () => {
-  assert.equal(isActiveTab("/messages-old", "/messages"), false);
-});
-```
-
-第一个用例检查所有高亮标签组成的数组，因此同时验证了“消息应亮”和“其他标签不应亮”。最后一个用例针对路径前缀很像、但并非子路由的情况，避免修复时把匹配范围扩大。
-
-**第四步：执行测试并读失败信息。** 安装依赖后，在项目根目录运行：
-
-```powershell
-npm test
-```
-
-只运行某个 TypeScript 测试文件时，可以用：
-
-```powershell
-node --import tsx --test apps/web/test/nav-active.test.ts
-```
-
-断言不满足时，测试会报告具体用例和差异。先检查函数结果为什么偏离业务规则，再修改实现，随后重新执行相关测试。
-
-**第五步：涉及浏览器时，再补充端到端验证。** 首次安装 Chromium 后运行：
-
-```powershell
-npx playwright install chromium
-npm run test:e2e
-```
-
-测试会在 3001 端口启动独立服务并使用 `data/e2e/` 数据库，请保持端口空闲。地图自动化测试使用 SDK 替身，应用接口、数据库和页面交互仍使用真实实现。真实外部地图服务另行检查。
+1. **明确测试目标。** 确定被测函数或模块的输入、预期输出和异常行为，每个用例围绕一个明确的规则展开。
+2. **设计测试用例。** 同时考虑正常、异常和边界情况，检查可达分支，以及循环执行零次、一次和多次时的行为。
+3. **准备独立环境。** 复用基础数据的初始化逻辑，由各用例补充自己的附加数据；需要时模拟外部依赖或包含请求方法、请求体和 Cookie 的 Web 请求，避免用例相互影响。
+4. **执行并验证结果。** 使用断言检查返回值、状态变化和错误信息。非法输入应产生可识别的校验或逻辑错误，不能只以“没有崩溃”判断测试通过。
+5. **清理并持续回归。** 测试结束后释放资源、清理测试数据；修复问题后保留对应用例，并检查覆盖情况，防止同类问题再次出现。
 
 ### 3. 异常流程：区分逻辑异常和系统异常
 
