@@ -1,0 +1,118 @@
+TAP version 13
+# Subtest: The home tab is active only on the root page
+ok 1 - The home tab is active only on the root page
+  ---
+  duration_ms: 1.2802
+  type: 'test'
+  ...
+# Subtest: The messages list activates the messages tab and nothing else
+ok 2 - The messages list activates the messages tab and nothing else
+  ---
+  duration_ms: 0.1965
+  type: 'test'
+  ...
+# Subtest: A conversation page keeps the messages tab active
+ok 3 - A conversation page keeps the messages tab active
+  ---
+  duration_ms: 0.1654
+  type: 'test'
+  ...
+# Subtest: The profile tab is active on its own page
+ok 4 - The profile tab is active on its own page
+  ---
+  duration_ms: 0.0923
+  type: 'test'
+  ...
+# Subtest: A profile sub page keeps the profile tab active
+ok 5 - A profile sub page keeps the profile tab active
+  ---
+  duration_ms: 0.0826
+  type: 'test'
+  ...
+# Subtest: The my-posts page still counts as the profile tab
+ok 6 - The my-posts page still counts as the profile tab
+  ---
+  duration_ms: 0.0745
+  type: 'test'
+  ...
+# Subtest: The publish tab is active on the publish page
+ok 7 - The publish tab is active on the publish page
+  ---
+  duration_ms: 0.1542
+  type: 'test'
+  ...
+# Subtest: The nearby tab is active on the nearby page
+ok 8 - The nearby tab is active on the nearby page
+  ---
+  duration_ms: 0.0898
+  type: 'test'
+  ...
+# Subtest: The messages list never activates the profile tab
+ok 9 - The messages list never activates the profile tab
+  ---
+  duration_ms: 0.2594
+  type: 'test'
+  ...
+# Subtest: The profile page never activates the messages tab
+ok 10 - The profile page never activates the messages tab
+  ---
+  duration_ms: 0.2861
+  type: 'test'
+  ...
+# Subtest: A longer path that merely starts with a tab name is not a match
+ok 11 - A longer path that merely starts with a tab name is not a match
+  ---
+  duration_ms: 0.0903
+  type: 'test'
+  ...
+# Subtest: Every tab page activates exactly one tab
+ok 12 - Every tab page activates exactly one tab
+  ---
+  duration_ms: 0.1607
+  type: 'test'
+  ...
+# Subtest: The search request always asks for active posts only
+ok 13 - The search request always asks for active posts only
+  ---
+  duration_ms: 0.8232
+  type: 'test'
+  ...
+# Subtest: Even with every filter set the status stays active
+ok 14 - Even with every filter set the status stays active
+  ---
+  duration_ms: 0.1637
+  type: 'test'
+  ...
+# Subtest: Empty filters are left out of the query string
+ok 15 - Empty filters are left out of the query string
+  ---
+  duration_ms: 0.1064
+  type: 'test'
+  ...
+# Subtest: Filled filters are carried through
+ok 16 - Filled filters are carried through
+  ---
+  duration_ms: 0.3538
+  type: 'test'
+  ...
+# Subtest: Keywords with Chinese characters and spaces survive encoding
+ok 17 - Keywords with Chinese characters and spaces survive encoding
+  ---
+  duration_ms: 0.1882
+  type: 'test'
+  ...
+# Subtest: Sorting and paging are carried through
+ok 18 - Sorting and paging are carried through
+  ---
+  duration_ms: 0.115
+  type: 'test'
+  ...
+1..18
+# tests 18
+# suites 0
+# pass 18
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 289.0184

@@ -1,0 +1,47 @@
+
+> mayoimon@1.0.0 test:e2e
+> playwright test
+
+[WebServer] (node:27052) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:28064) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+
+Running 10 tests using 1 worker
+
+{"total":10,"timestamp":"2026-10-09T06:52:44.379Z","level":"info","scope":"test.playwright","event":"test.run_started"}
+(node:24152) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+{"testId":"4d56b3fcdc8b29b1ccb8-8782c070d7a0f7a9843a","name":" > chromium > chat-persistence.spec.ts > Persist before ACK, recover more than fifty messages, reconcile holes and retain local history","file":"D:\\mayoimono\\tests\\chat-persistence.spec.ts","retry":0,"timestamp":"2026-10-09T06:52:44.712Z","level":"info","scope":"test.playwright","event":"test.started"}
+  ok  1 [chromium] › tests\chat-persistence.spec.ts:51:5 › Persist before ACK, recover more than fifty messages, reconcile holes and retain local history (7.6s)
+{"testId":"4d56b3fcdc8b29b1ccb8-8782c070d7a0f7a9843a","name":" > chromium > chat-persistence.spec.ts > Persist before ACK, recover more than fifty messages, reconcile holes and retain local history","file":"D:\\mayoimono\\tests\\chat-persistence.spec.ts","retry":0,"status":"passed","durationMs":7551,"timestamp":"2026-10-09T06:52:52.801Z","level":"info","scope":"test.playwright","event":"test.passed"}
+{"testId":"4d56b3fcdc8b29b1ccb8-e2ca8f8770a88dfd56fd","name":" > chromium > chat-persistence.spec.ts > Outbox survives reload and tabs allocate distinct conversation sequence numbers","file":"D:\\mayoimono\\tests\\chat-persistence.spec.ts","retry":0,"timestamp":"2026-10-09T06:52:52.813Z","level":"info","scope":"test.playwright","event":"test.started"}
+  ok  2 [chromium] › tests\chat-persistence.spec.ts:194:5 › Outbox survives reload and tabs allocate distinct conversation sequence numbers (1.3s)
+{"testId":"4d56b3fcdc8b29b1ccb8-e2ca8f8770a88dfd56fd","name":" > chromium > chat-persistence.spec.ts > Outbox survives reload and tabs allocate distinct conversation sequence numbers","file":"D:\\mayoimono\\tests\\chat-persistence.spec.ts","retry":0,"status":"passed","durationMs":1281,"timestamp":"2026-10-09T06:52:54.110Z","level":"info","scope":"test.playwright","event":"test.passed"}
+{"testId":"1a72721d9ac5c938e1fe-7b0bf03cf887fb9f0340","name":" > chromium > error-handling.spec.ts > Session mutations update the UI even when a subsequent session lookup would fail","file":"D:\\mayoimono\\tests\\error-handling.spec.ts","retry":0,"timestamp":"2026-10-09T06:52:54.115Z","level":"info","scope":"test.playwright","event":"test.started"}
+  ok  3 [chromium] › tests\error-handling.spec.ts:4:5 › Session mutations update the UI even when a subsequent session lookup would fail (871ms)
+{"testId":"1a72721d9ac5c938e1fe-7b0bf03cf887fb9f0340","name":" > chromium > error-handling.spec.ts > Session mutations update the UI even when a subsequent session lookup would fail","file":"D:\\mayoimono\\tests\\error-handling.spec.ts","retry":0,"status":"passed","durationMs":871,"timestamp":"2026-10-09T06:52:54.995Z","level":"info","scope":"test.playwright","event":"test.passed"}
+{"testId":"1a72721d9ac5c938e1fe-a8fc420f305733e7299c","name":" > chromium > error-handling.spec.ts > Post statistics distinguish loading, failure and a successful zero count","file":"D:\\mayoimono\\tests\\error-handling.spec.ts","retry":0,"timestamp":"2026-10-09T06:52:54.996Z","level":"info","scope":"test.playwright","event":"test.started"}
+  ok  4 [chromium] › tests\error-handling.spec.ts:44:5 › Post statistics distinguish loading, failure and a successful zero count (371ms)
+{"testId":"1a72721d9ac5c938e1fe-a8fc420f305733e7299c","name":" > chromium > error-handling.spec.ts > Post statistics distinguish loading, failure and a successful zero count","file":"D:\\mayoimono\\tests\\error-handling.spec.ts","retry":0,"status":"passed","durationMs":371,"timestamp":"2026-10-09T06:52:55.377Z","level":"info","scope":"test.playwright","event":"test.passed"}
+{"testId":"f5cfbb43c738b781d419-0e84af2862e53301d411","name":" > chromium > nearby.spec.ts > Nearby filters/map links, converted GPS and moving to another area use real post queries","file":"D:\\mayoimono\\tests\\nearby.spec.ts","retry":0,"timestamp":"2026-10-09T06:52:55.385Z","level":"info","scope":"test.playwright","event":"test.started"}
+  ok  5 [chromium] › tests\nearby.spec.ts:28:5 › Nearby filters/map links, converted GPS and moving to another area use real post queries (587ms)
+{"testId":"f5cfbb43c738b781d419-0e84af2862e53301d411","name":" > chromium > nearby.spec.ts > Nearby filters/map links, converted GPS and moving to another area use real post queries","file":"D:\\mayoimono\\tests\\nearby.spec.ts","retry":0,"status":"passed","durationMs":587,"timestamp":"2026-10-09T06:52:56.059Z","level":"info","scope":"test.playwright","event":"test.passed"}
+{"testId":"f5cfbb43c738b781d419-0835c13b0f395e1fb5cf","name":" > chromium > nearby.spec.ts > Publishing a map position persists it and shows the post on Nearby","file":"D:\\mayoimono\\tests\\nearby.spec.ts","retry":0,"timestamp":"2026-10-09T06:52:56.059Z","level":"info","scope":"test.playwright","event":"test.started"}
+  ok  6 [chromium] › tests\nearby.spec.ts:100:5 › Publishing a map position persists it and shows the post on Nearby (609ms)
+{"testId":"f5cfbb43c738b781d419-0835c13b0f395e1fb5cf","name":" > chromium > nearby.spec.ts > Publishing a map position persists it and shows the post on Nearby","file":"D:\\mayoimono\\tests\\nearby.spec.ts","retry":0,"status":"passed","durationMs":609,"timestamp":"2026-10-09T06:52:56.678Z","level":"info","scope":"test.playwright","event":"test.passed"}
+{"testId":"f5cfbb43c738b781d419-75ac3b52229f1f17685d","name":" > chromium > nearby.spec.ts > Map load errors can retry and denied/failed location preserves the current query","file":"D:\\mayoimono\\tests\\nearby.spec.ts","retry":0,"timestamp":"2026-10-09T06:52:56.678Z","level":"info","scope":"test.playwright","event":"test.started"}
+  ok  7 [chromium] › tests\nearby.spec.ts:135:5 › Map load errors can retry and denied/failed location preserves the current query (348ms)
+{"testId":"f5cfbb43c738b781d419-75ac3b52229f1f17685d","name":" > chromium > nearby.spec.ts > Map load errors can retry and denied/failed location preserves the current query","file":"D:\\mayoimono\\tests\\nearby.spec.ts","retry":0,"status":"passed","durationMs":348,"timestamp":"2026-10-09T06:52:57.040Z","level":"info","scope":"test.playwright","event":"test.passed"}
+{"testId":"2fa8ab87beca8e7f39ce-cba29ede6e6dbd98016e","name":" > chromium > product.spec.ts > Mobile product flow: publish, search, favorites, history, two-user live chat, edit and complete","file":"D:\\mayoimono\\tests\\product.spec.ts","retry":0,"timestamp":"2026-10-09T06:52:57.048Z","level":"info","scope":"test.playwright","event":"test.started"}
+  ok  8 [chromium] › tests\product.spec.ts:9:5 › Mobile product flow: publish, search, favorites, history, two-user live chat, edit and complete (8.2s)
+{"testId":"2fa8ab87beca8e7f39ce-cba29ede6e6dbd98016e","name":" > chromium > product.spec.ts > Mobile product flow: publish, search, favorites, history, two-user live chat, edit and complete","file":"D:\\mayoimono\\tests\\product.spec.ts","retry":0,"status":"passed","durationMs":8185,"timestamp":"2026-10-09T06:53:05.247Z","level":"info","scope":"test.playwright","event":"test.passed"}
+{"testId":"2fa8ab87beca8e7f39ce-63c5bdbe288b52662476","name":" > chromium > product.spec.ts > Drafts and photo upload survive reload; validation and mobile layout","file":"D:\\mayoimono\\tests\\product.spec.ts","retry":0,"timestamp":"2026-10-09T06:53:05.250Z","level":"info","scope":"test.playwright","event":"test.started"}
+  ok  9 [chromium] › tests\product.spec.ts:128:5 › Drafts and photo upload survive reload; validation and mobile layout (748ms)
+{"testId":"2fa8ab87beca8e7f39ce-63c5bdbe288b52662476","name":" > chromium > product.spec.ts > Drafts and photo upload survive reload; validation and mobile layout","file":"D:\\mayoimono\\tests\\product.spec.ts","retry":0,"status":"passed","durationMs":748,"timestamp":"2026-10-09T06:53:06.010Z","level":"info","scope":"test.playwright","event":"test.passed"}
+{"testId":"2fa8ab87beca8e7f39ce-2aae95a409a275a26104","name":" > chromium > product.spec.ts > Prototype pages render at mobile and desktop widths without horizontal overflow","file":"D:\\mayoimono\\tests\\product.spec.ts","retry":0,"timestamp":"2026-10-09T06:53:06.011Z","level":"info","scope":"test.playwright","event":"test.started"}
+  ok 10 [chromium] › tests\product.spec.ts:162:5 › Prototype pages render at mobile and desktop widths without horizontal overflow (462ms)
+{"testId":"2fa8ab87beca8e7f39ce-2aae95a409a275a26104","name":" > chromium > product.spec.ts > Prototype pages render at mobile and desktop widths without horizontal overflow","file":"D:\\mayoimono\\tests\\product.spec.ts","retry":0,"status":"passed","durationMs":462,"timestamp":"2026-10-09T06:53:06.487Z","level":"info","scope":"test.playwright","event":"test.passed"}
+
+  10 passed (24.6s)
+{"status":"passed","durationMs":24590.915,"timestamp":"2026-10-09T06:53:07.000Z","level":"info","scope":"test.playwright","event":"test.finished"}

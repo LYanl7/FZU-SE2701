@@ -1,0 +1,7 @@
+
+> mayoimon@1.0.0 check
+> npm run check -w @mayoimon/web
+
+
+> @mayoimon/web@1.0.0 check
+> tsc --noEmit && tsc -p tsconfig.server.json --noEmit

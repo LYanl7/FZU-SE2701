@@ -1,0 +1,65 @@
+
+> mayoimon@1.0.0 build
+> npm run build -w @mayoimon/web
+
+
+> @mayoimon/web@1.0.0 build
+> next build && tsc -p tsconfig.server.json
+
+▲ Next.js 16.3.7 (Turbopack)
+- Environments: .env.local
+✓ Running next.config.ts took 138ms
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 1102ms
+  Running TypeScript ...
+  Finished TypeScript in 1558ms ...
+  Collecting page data using 15 workers ...
+  Generating static pages using 15 workers (0/12) ...
+  Generating static pages using 15 workers (3/12)
+  Generating static pages using 15 workers (6/12)
+  Generating static pages using 15 workers (9/12)
+✓ Generating static pages using 15 workers (12/12) in 326ms
+  Finalizing page optimization ...
+
+Route (app)
+┌ ○ /
+├ ○ /_not-found
+├ ƒ /api/chats
+├ ƒ /api/chats/[id]/messages
+├ ƒ /api/chats/[id]/read
+├ ƒ /api/chats/[id]/sync
+├ ƒ /api/chats/delivery
+├ ƒ /api/chats/read-all
+├ ƒ /api/health
+├ ƒ /api/interactions/favorites
+├ ƒ /api/interactions/favorites/[id]
+├ ƒ /api/interactions/history
+├ ƒ /api/interactions/posts/[id]/view
+├ ƒ /api/interactions/stats
+├ ƒ /api/posts
+├ ƒ /api/posts/[id]
+├ ƒ /api/posts/[id]/complete
+├ ƒ /api/posts/mine
+├ ƒ /api/posts/nearby
+├ ƒ /api/uploads
+├ ƒ /api/users/login
+├ ƒ /api/users/logout
+├ ƒ /api/users/me
+├ ƒ /api/users/register
+├ ○ /login
+├ ○ /me
+├ ƒ /me/[section]
+├ ○ /messages
+├ ƒ /messages/[id]
+├ ○ /my-posts
+├ ○ /nearby
+├ ƒ /posts/[id]
+├ ○ /publish
+├ ○ /search
+├ ○ /settings
+└ ƒ /uploads/[filename]
+
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
