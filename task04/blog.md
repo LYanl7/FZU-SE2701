@@ -274,7 +274,7 @@ npm start
 
 我们使用 Node.js 自带的 **`node:test`** 组织测试，使用 **`node:assert/strict`** 编写断言，通过 **tsx** 运行 TypeScript 测试文件。浏览器操作使用 **Playwright Test**，验证真实页面、HTTP 请求和双账号聊天流程。
 
-两类测试各有职责：`isActiveTab()`、`buildSearchQuery()` 和 HTTP 客户端等可以独立验证，属于单元测试；调用 Route Handler、操作临时 SQLite 或建立 WebSocket 的测试属于集成测试；打开网页并点击表单的测试属于端到端测试。`npm test` 包含前两类，不能将它输出的总数全部称为纯单元测试。
+不同层次的测试各有职责：`isActiveTab()`、`buildSearchQuery()` 和 HTTP 客户端等可以独立验证，属于单元测试；调用 Route Handler、操作临时 SQLite 或建立 WebSocket 的测试属于集成测试；打开网页并点击表单的测试属于端到端测试。`npm test` 包含前两类，不能将它输出的总数全部称为纯单元测试。
 
 测试方法按“阅读工具的最小示例—找出函数的输入和预期结果—构造正常与异常数据—执行断言—将修复补成回归测试”的顺序整理。相关工具用法参考 [Node.js 测试文档](https://nodejs.org/docs/latest-v22.x/api/test.html) 和 [Playwright 编写测试文档](https://playwright.dev/docs/writing-tests)。
 
@@ -345,7 +345,26 @@ npm run test:e2e
 
 测试会在 3001 端口启动独立服务并使用 `data/e2e/` 数据库，请保持端口空闲。地图自动化测试使用 SDK 替身，应用接口、数据库和页面交互仍使用真实实现。真实外部地图服务另行检查。
 
-### 3. 项目测试代码：异常响应不能伪装成成功
+### 3. 异常流程：区分逻辑异常和系统异常
+
+我的理解是，异常流程也应有明确的预期结果。输入参数不合法、用户没有权限或信息状态不允许操作，都是可以预判的逻辑错误，应通过明确的异常类型和错误信息通知上层调用代码。参数错误应在校验阶段被识别，避免继续执行后产生空值访问、数据库约束失败等系统异常。
+
+项目使用自定义的 `AppError` 表达业务错误，定义在 [`infrastructure/context.ts`](https://github.com/LYanl7/052402132-102401507/blob/de86be3/apps/web/src/modules/infrastructure/context.ts)：
+
+```ts
+export class AppError extends Error {
+  constructor(
+    public statusCode: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+```
+
+业务层可以抛出 `new AppError(403, '只有发布者可以修改信息')`，由统一请求入口转换为对应的响应；参数校验产生的 `ZodError` 则转换为 `400` 和具体校验信息。真正未预期的系统异常另行记录并返回 `500`。测试时既要检查操作失败，也要检查异常类型、状态码和错误信息是否符合预期，例如非法参数应返回 `400`，不能因内部处理失误变成 `500`。
+
+下面的客户端测试继续验证：上层调用代码能否收到明确的错误，而不是把异常响应当成正常数据。
 
 以下节选自 [`client-api.test.ts`](https://github.com/LYanl7/052402132-102401507/blob/de86be3/apps/web/test/client-api.test.ts)，测试 `api()` 的失败响应处理：
 
@@ -391,61 +410,76 @@ assert.throws(
 
 ### 5. 如何构造数据，如何考虑测试人员的刁难
 
-我们按输入、身份、状态、网络和存储等维度划分情况，再选择容易暴露错误的组合。
+**分别构造正常、边界和极端数据。** 正常数据用于验证功能的基本行为，边界数据检查规则允许范围的临界位置，极端数据检查空输入、大批量数据及异常组合。输入参数的边界需要单独测试，并检查返回值的内容和结构，不能只判断“函数没有报错”。
+
+例如，附近查询的半径范围为 50～50000 米，设计用例时应分别考虑 `49`、`50`、`51` 和 `49999`、`50000`、`50001`；对于最大长度为 60 的标题，可以检查空字符串、全空格、长度 59、60、61 等情况。合法边界应返回正确有效的结果，越界参数应返回明确的校验错误。
 
 | 维度 | 数据与操作 | 重点检查 |
 | --- | --- | --- |
 | 正常流程 | 两个独立账号；寻物、招领各一条；发布后搜索和联系 | 页面、接口和持久化能否形成完整流程 |
-| 输入异常 | 空标题、未来时间、非法经纬度、只填一个坐标 | 服务端拒绝非法输入；草稿与正式发布规则不同 |
+| 参数边界 | 标题长度临界值、经纬度上下限、查询半径上下限及其两侧 | 合法输入的输出有效，非法输入返回明确错误 |
+| 输入异常 | 空标题、全空格、未来时间、非数字坐标、只填一个坐标 | 校验错误不演变为系统异常；草稿与正式发布规则不同 |
 | 查询参数 | 中文与空格、SQL 特殊字符、空筛选、多项筛选、分页 | 关键词按字面处理，编码及筛选条件不丢失 |
 | 导航路径 | `/`、`/me`、`/messages`、会话子路由、`/messages-old` | 避免多个标签同时高亮，避免错误前缀匹配 |
 | 权限隔离 | 未登录；作者；其他用户；会话之外的第三人 | 不能编辑他人信息、查看他人草稿或读取私聊 |
 | 业务状态 | 草稿、进行中、已完成、软删除 | 状态转换、列表可见性和联系入口符合规则 |
 | 重复操作 | 重复收藏、重复发起联系、重复提交同一条消息 | 不生成重复记录或重复会话 |
 | 地图查询 | 同一点、范围内外、无坐标、缺经度、legacy 坐标 | 距离为零也有效；不能把缺失经度当成零计算 |
-| 批次与积压 | 125 条离线消息，分批 ACK | 每批 50 条不能变成总量上限；设备确认彼此独立 |
+| 循环与分批 | 空集合、单条、多条；49、50、51、125 条积压消息 | 检查循环进入、重复执行、退出和跨批次行为 |
 | 网络与存储故障 | 响应丢失、WebSocket 不可用、本地写入失败、刷新 | 原消息标识保留，未持久化不 ACK，恢复后可重试 |
 | 并发与过期 | 两个标签页同时发送；消息过期后重试 | 序号分配不冲突，过期正文不能被旧请求复活 |
 | 文件上传 | 伪装 PNG、超过 5 MB、引用他人图片 | 检查文件头、大小、归属及失败回滚 |
 
-针对“刁难”，我们优先检查绕过页面直接调用接口、切换账号、构造相似路径、重复请求和中途失败。这些情况能检验程序是否真正守住规则。测试不能只证明某个正常示例可以运行，也要证明不允许的操作确实失败。
+**逐项覆盖分支和循环。** 编写测试时，应对照代码列出每个可达条件的成立与不成立情况，包括正常返回、提前返回、逻辑异常、异常捕获及清理路径。循环需要检查零次、一次、多次迭代，以及 `break`、`continue` 和分批处理的退出条件。每条可达流程都应有相应的测试用例和结果断言。
 
-### 6. 实际执行结果与验证范围
+这里的目标是避免遗漏可达分支与循环的关键行为。循环次数可以不断增加，不能把所有次数和路径组合都穷举；分支被执行也不等于结果已验证正确。因此还需要结合输出断言和覆盖率报告检查遗漏。目前项目没有测量覆盖率百分比，不能仅凭现有测试通过就宣称已经实现全部分支覆盖。上表包含现有场景和后续补充用例的设计方向。
 
-2026 年 10 月 9 日，本机环境为 Windows、Node.js 22.21.0、npm 11.7.0，实际运行结果如下：
+针对测试人员可能构造的情况，我会特别考虑绕过页面直接调用接口、切换身份、传入边界参数、重复请求和执行中途失败，检查系统在这些条件下能否返回预期结果并保持数据一致。
 
-| 检查 | 结果 | 验证对象 |
-| --- | --- | --- |
-| `npm run check` | 通过 | 本地 `de86be3` 的页面及服务端 TypeScript |
-| `npm test` | **33 项通过，0 项失败** | 同一本地快照的单元与集成测试 |
-| `npm run build` | 通过 | 同一本地快照的生产构建与 Node 服务入口 |
-| `$env:E2E_PRODUCTION='true'; npm run test:e2e` | **10 项通过，0 项失败** | 同一本地快照的生产模式浏览器流程 |
-| PR #1 新增导航与查询测试 | **18 项通过，0 项失败** | 从 GitHub PR 提取的四个新增文件，独立运行两份测试文件 |
+### 6. Web 请求模拟与测试数据隔离
 
-![实际测试日志摘要，分别展示本地应用测试与队友新增测试](https://raw.githubusercontent.com/LYanl7/FZU-SE2701/main/task04/images/test-results.png)
+**Web 系统需要验证完整的请求信息。** 测试既要能模拟 GET 查询，也要能构造 POST、PUT、DELETE 等方法，并携带请求体、Cookie 和其他请求头，才能验证登录、权限和参数解析。项目的 [`invokeRoute()`](https://github.com/LYanl7/052402132-102401507/blob/de86be3/apps/web/test/route-harness.ts) 根据这些信息构造 Web `Request`，调用真实 Route Handler 并读取响应；它不经过真实网络，实际 HTTP 路由和服务启动由浏览器测试补充验证。
 
-本地应用尚未同步 GitHub 上的合并提交 `29afb45`，因此上面的 33 项和 18 项是**分别验证的两个快照**，没有将它们合称为“合并后 51 项测试全部通过”。本次也没有测量覆盖率百分比。原始输出保存在本博客目录的 `evidence/` 中，可在 [课程仓库中查看](https://github.com/LYanl7/FZU-SE2701/tree/main/task04/evidence)。
+以下节选自 [`nearby.test.ts`](https://github.com/LYanl7/052402132-102401507/blob/de86be3/apps/web/test/nearby.test.ts)，省略了运行时初始化及后续用例：
+
+```ts
+const call = (method: string, url: string, payload?: unknown, cookie?: string) =>
+  invokeRoute({ method, url, payload, headers: cookie ? { cookie } : {} });
+
+const registered = await call('POST', '/api/users/register', {
+  email: 'nearby@example.com',
+  password: 'password123',
+  name: '地图测试',
+});
+const cookie = registered.headers['set-cookie'].split(';')[0];
+
+async function create(title: string, overrides: object = {}) {
+  const response = await call('POST', '/api/posts', { ...input, title, ...overrides }, cookie);
+  assert.equal(response.statusCode, 201);
+  return response.json().post;
+}
+```
+
+这里先模拟 POST 注册，取得响应中的会话 Cookie，再携带 Cookie 和 JSON 请求体创建信息。`input` 是用例中定义的合法发布参数，`overrides` 用于构造不同状态或坐标。去掉 Cookie 可以验证未登录场景，更换其他用户的 Cookie 可以验证权限隔离；除了检查状态码，还应断言返回数据和数据库变更是否正确。
+
+**将基础数据与附加数据分开。** 基础数据是多个 testcase 共同需要的初始化内容，例如发布者、联系者和无关用户这几种测试身份，可放进统一的 fixture。附加数据由各 testcase 自己建立，例如某个用例需要的草稿、已完成信息、特殊坐标或积压消息。
+
+“共享基础数据”指复用初始化逻辑，每次测试仍应建立独立的数据副本，避免共享可变状态。对于使用数据库的独立用例，期望的执行顺序是：
+
+1. 清空专用测试数据库，或新建等价的空内存、临时数据库。
+2. 导入基础数据，建立测试身份和必要的公共记录。
+3. 在当前 testcase 中导入附加数据。
+4. 执行被测函数或模拟请求。
+5. 验证返回值、逻辑异常及数据库结果。
+6. 关闭连接并清理测试资源。
+
+当前私聊测试通过 `fixture()` 为每个独立用例创建临时数据库、测试用户和会话，再由用例添加消息等附加数据；附近测试使用新的内存数据库。部分完整 API 流程中的子测试仍共享前置状态，后续可按上述方式拆成独立 fixture，进一步减少执行顺序依赖。纯函数测试则只需要准备输入，不必初始化数据库。
 
 <a id="commits" name="commits"></a>
 
 ## 七、GitHub 代码签入记录
 
 ![GitHub master 分支提交记录，包含双方提交与 PR 合并](https://raw.githubusercontent.com/LYanl7/FZU-SE2701/main/task04/images/github-commits.png)
-
-截图于 2026 年 10 月 9 日从项目的 [GitHub 提交历史](https://github.com/LYanl7/052402132-102401507/commits/master/) 获取，包含两位贡献者的提交及合并记录。
-
-| 提交 | 主要内容 | 意义 |
-| --- | --- | --- |
-| `7ad064f` | `refactor: encapsulate database access with Drizzle ORM` | 将数据库访问集中到仓储 |
-| `de63764` | `feat: persist chat locally with reliable delivery and server TTL` | 增加本地聊天持久化与可靠投递 |
-| `180d446` | `feat: add infrastructure logging for business flows and tests` | 为接口、业务与测试增加日志 |
-| `ae4cd97` | `feat: integrate Baidu maps for nearby posts` | 接入真实地图与附近查询 |
-| `c83f7b0` | `fix: stop the profile tab from highlighting on the messages page` | 修复消息页导航高亮错误并增加测试 |
-| `b0eab31` | `feat: show an unread badge on the messages tab` | 在底部消息入口展示未读数量 |
-| `3651b99` | `fix: keep completed posts out of search results` | 让搜索页只查找进行中的信息 |
-| `29afb45` | `Merge pull request #1 from Ki-K4/master` | 合并队友的三个提交 |
-
-提交信息以 `feat`、`fix`、`refactor`、`docs` 等说明修改类型，并写出具体对象和行为，便于回看每一次改动解决了什么问题。
 
 <a id="problems" name="problems"></a>
 
